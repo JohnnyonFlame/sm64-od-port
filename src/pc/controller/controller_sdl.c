@@ -12,7 +12,7 @@
 #include "controller_api.h"
 
 #define DEADZONE 4960
-
+#ifndef TARGET_OD
 static bool init_ok;
 static SDL_GameController *sdl_cntrl;
 
@@ -93,6 +93,60 @@ static void controller_sdl_read(OSContPad *pad) {
         pad->stick_y = stick_y == 128 ? 127 : stick_y;
     }
 }
+
+#else /* TARGET_OD */
+
+static bool init_ok;
+static SDL_Joystick *sdl_joy;
+
+static void controller_sdl_init(void) {
+    if (SDL_Init(SDL_INIT_JOYSTICK) != 0) {
+        fprintf(stderr, "SDL init error: %s\n", SDL_GetError());
+        return;
+    }
+
+    init_ok = true;
+}
+
+static void controller_sdl_read(OSContPad *pad) {
+    if (!init_ok) {
+        return;
+    }
+
+    SDL_JoystickUpdate();
+
+    if (sdl_joy != NULL && !SDL_JoystickGetAttached(sdl_joy)) {
+        SDL_JoystickClose(sdl_joy);
+        sdl_joy = NULL;
+    }
+    if (sdl_joy == NULL) {
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            if (!SDL_IsGameController(i)) {
+                sdl_joy = SDL_JoystickOpen(i);
+                if (sdl_joy != NULL) {
+                    break;
+                }
+            }
+        }
+        if (sdl_joy == NULL) {
+            return;
+        }
+    }
+
+    int16_t leftx = SDL_JoystickGetAxis(sdl_joy, 0);
+    int16_t lefty = SDL_JoystickGetAxis(sdl_joy, 1);
+
+    if (lefty == -32768) {
+        lefty = 32767;
+    }
+    uint32_t magnitude_sq = (uint32_t)(leftx * leftx) + (uint32_t)(lefty * lefty);
+    if (magnitude_sq > (uint32_t)(DEADZONE * DEADZONE)) {
+        pad->stick_x = leftx / 0x100;
+        int stick_y = -lefty / 0x100;
+        pad->stick_y = stick_y == 128 ? 127 : stick_y;
+    }
+}
+#endif
 
 struct ControllerAPI controller_sdl = {
     controller_sdl_init,
