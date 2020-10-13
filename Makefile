@@ -21,6 +21,8 @@ NON_MATCHING ?= 0
 TARGET_N64 ?= 0
 # Build for Emscripten/WebGL
 TARGET_WEB ?= 0
+# Build for OpenDingux
+TARGET_OD ?= 1
 # Compiler to use (ido or gcc)
 COMPILER ?= ido
 
@@ -31,11 +33,13 @@ ifeq ($(TARGET_N64),0)
   GRUCODE := f3dex2e
   TARGET_WINDOWS := 0
   ifeq ($(TARGET_WEB),0)
-    ifeq ($(OS),Windows_NT)
-      TARGET_WINDOWS := 1
-    else
-      # TODO: Detect Mac OS X, BSD, etc. For now, assume Linux
-      TARGET_LINUX := 1
+    ifeq ($(TARGET_OD),0)
+      ifeq ($(OS),Windows_NT)
+        TARGET_WINDOWS := 1
+      else
+        # TODO: Detect Mac OS X, BSD, etc. For now, assume Linux
+        TARGET_LINUX := 1
+      endif
     endif
   endif
 
@@ -440,14 +444,25 @@ OBJDUMP := objdump
 OBJCOPY := objcopy
 PYTHON := python3
 
+ifeq ($(TARGET_OD),1)
+  OD_TOOLCHAIN ?= /opt/gcw0-toolchain/
+  CC := $(OD_TOOLCHAIN)bin/mipsel-linux-gcc
+  CXX := $(OD_TOOLCHAIN)bin/mipsel-linux-g++
+  LD := $(OD_TOOLCHAIN)bin/mipsel-linux-gcc
+endif
+
 # Platform-specific compiler and linker flags
 ifeq ($(TARGET_WINDOWS),1)
   PLATFORM_CFLAGS  := -DTARGET_WINDOWS
-  PLATFORM_LDFLAGS := -lm -lxinput9_1_0 -lole32 -no-pie -mwindows
+  PLATFORM_LDFLAGS := -lm -lxinput9_1_0 -lole32 -no-pie -mwindowss
 endif
 ifeq ($(TARGET_LINUX),1)
   PLATFORM_CFLAGS  := -DTARGET_LINUX `pkg-config --cflags libusb-1.0`
   PLATFORM_LDFLAGS := -lm -lpthread `pkg-config --libs libusb-1.0` -lasound -lpulse -no-pie
+endif
+ifeq ($(TARGET_OD),1)
+  PLATFORM_CFLAGS  := -DTARGET_OD
+  PLATFORM_LDFLAGS := -lm -lpthread -lasound -no-pie
 endif
 ifeq ($(TARGET_WEB),1)
   PLATFORM_CFLAGS  := -DTARGET_WEB
@@ -468,6 +483,11 @@ ifeq ($(ENABLE_OPENGL),1)
     GFX_CFLAGS  += $(shell sdl2-config --cflags)
     GFX_LDFLAGS += -lGL $(shell sdl2-config --libs) -lX11 -lXrandr
   endif
+  ifeq ($(TARGET_OD),1)
+    GFX_CFLAGS += $(shell $(OD_TOOLCHAIN)mipsel-gcw0-linux-uclibc/sysroot/usr/bin/sdl2-config --cflags)
+    GFX_CFLAGS += -DUSE_TEXTURE_ATLAS -DUSE_SDL=2 -DUSE_GLES2
+    GFX_LDFLAGS += $(shell $(OD_TOOLCHAIN)mipsel-gcw0-linux-uclibc/sysroot/usr/bin/sdl2-config --libs) -lGLESv2
+  endif
   ifeq ($(TARGET_WEB),1)
     GFX_CFLAGS  += -s USE_SDL=2
     GFX_LDFLAGS += -lGL -lSDL2
@@ -485,7 +505,11 @@ endif
 GFX_CFLAGS += -DWIDESCREEN
 
 CC_CHECK := $(CC) -fsyntax-only -fsigned-char $(INCLUDE_CFLAGS) -Wall -Wextra -Wno-format-security -D_LANGUAGE_C $(VERSION_CFLAGS) $(MATCH_CFLAGS) $(PLATFORM_CFLAGS) $(GFX_CFLAGS) $(GRUCODE_CFLAGS)
+ifeq ($(TARGET_OD),0)
 CFLAGS := $(OPT_FLAGS) $(INCLUDE_CFLAGS) -D_LANGUAGE_C $(VERSION_CFLAGS) $(MATCH_CFLAGS) $(PLATFORM_CFLAGS) $(GFX_CFLAGS) $(GRUCODE_CFLAGS) -fno-strict-aliasing -fwrapv -march=native
+else
+CFLAGS := $(OPT_FLAGS) $(INCLUDE_CFLAGS) -D_LANGUAGE_C $(VERSION_CFLAGS) $(MATCH_CFLAGS) $(PLATFORM_CFLAGS) $(GFX_CFLAGS) $(GRUCODE_CFLAGS) -fno-strict-aliasing -fwrapv
+endif
 
 ASFLAGS := -I include -I $(BUILD_DIR) $(VERSION_ASFLAGS)
 
