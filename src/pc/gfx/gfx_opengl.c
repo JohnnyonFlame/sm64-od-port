@@ -35,8 +35,8 @@ struct ShaderProgram {
     uint8_t num_inputs;
     bool used_textures[2];
     uint8_t num_floats;
-    GLint attrib_locations[7];
-    uint8_t attrib_sizes[7];
+    GLint attrib_locations[12];
+    uint8_t attrib_sizes[12];
     uint8_t num_attribs;
     bool used_noise;
     GLint frame_count_location;
@@ -49,6 +49,10 @@ static GLuint opengl_vbo;
 
 static uint32_t frame_count;
 static uint32_t current_height;
+
+#ifdef USE_TEXTURE_ATLAS
+GLuint vt_page;
+#endif
 
 static bool gfx_opengl_z_is_from_0_to_1(void) {
     return false;
@@ -169,11 +173,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     struct CCFeatures cc_features;
     gfx_cc_get_features(shader_id, &cc_features);
 
-    char vs_buf[1024];
-    char fs_buf[1024];
+    char vs_buf[4096];
+    char fs_buf[4096];
     size_t vs_len = 0;
     size_t fs_len = 0;
     size_t num_floats = 4;
+
+    int num_samplers = cc_features.used_textures[0] + cc_features.used_textures[1];
+    char *aTexParams_type[] = {
+        "",
+        "vec2",
+        "vec4"
+    };
 
     // Vertex shader
 #ifndef USE_GLES2
@@ -181,10 +192,23 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 #else
     append_line(vs_buf, &vs_len, "#version 100");
 #endif
+    append_line(vs_buf, &vs_len, "precision highp float;");
     append_line(vs_buf, &vs_len, "attribute vec4 aVtxPos;");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(vs_buf, &vs_len, "attribute vec2 aTexCoord;");
         append_line(vs_buf, &vs_len, "varying vec2 vTexCoord;");
+#ifdef USE_TEXTURE_ATLAS
+        vs_len += sprintf(vs_buf + vs_len, "#define bundle_t %s\n", aTexParams_type[num_samplers]);
+        vs_len += sprintf(vs_buf + vs_len, "attribute bundle_t aTexParams;\n");
+        for (int i = 0, samplers = 1; i < 2; i++) {
+            if (cc_features.used_textures[i]) {
+                vs_len += sprintf(vs_buf + vs_len, "varying vec4 vTexDimensions%d;\n", samplers);
+                vs_len += sprintf(vs_buf + vs_len, "varying vec2 vTexSampler%d;\n", samplers);
+                samplers++;
+                num_floats += 2;
+            }
+        }
+#endif
         num_floats += 2;
     }
     if (cc_features.opt_fog) {
@@ -197,6 +221,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         vs_len += sprintf(vs_buf + vs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
+    
     append_line(vs_buf, &vs_len, "void main() {");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(vs_buf, &vs_len, "vTexCoord = aTexCoord;");
@@ -207,6 +232,43 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     for (int i = 0; i < cc_features.num_inputs; i++) {
         vs_len += sprintf(vs_buf + vs_len, "vInput%d = aInput%d;\n", i + 1, i + 1);
     }
+
+    // Extract the bundled encFloat_t in parallel
+    if (num_samplers > 0) {
+        // exponent = floor(log2(value))
+        append_line(vs_buf, &vs_len, "bundle_t e = floor(log2(aTexParams));");
+        append_line(vs_buf, &vs_len, "bundle_t p = pow(bundle_t(2.0), e);");
+        // MAXIMUM_MANTISSA_VALUE = (1<<23)-1 = 8388607.0
+        // mantissa = MAXIMUM_MANTISSA_VALUE * (value / 2.0**exponent)) - 1)
+        append_line(vs_buf, &vs_len, "bundle_t mant = 8388607.0 * ((aTexParams / p) - bundle_t(1.0));");
+
+        append_line(vs_buf, &vs_len, "bundle_t dec_cms_cmt = e + 127.0;");
+        // cmt = (e+BIAS) >> 5
+        append_line(vs_buf, &vs_len, "bundle_t dec_cmt = floor(dec_cms_cmt / 32.0);");
+        // cms = ((e+BIAS) >> 1) & 0x3
+        append_line(vs_buf, &vs_len, "bundle_t dec_cms = floor((dec_cms_cmt - dec_cmt * 32.0) / 2.0);");
+        // y or height = mant >> 11
+        append_line(vs_buf, &vs_len, "bundle_t dec_yh = floor(mant / 2048.0);");
+        // x or width = mant & 0xFFF
+        append_line(vs_buf, &vs_len, "bundle_t dec_xw = mant - (dec_yh * 2048.0);");
+
+        // Swizzle all the necessary things into their correct places
+        if (num_samplers > 0) {
+            // Dimensions are in the [0-2048] range, but OpenGL expects [0-1]. Scale it down.
+            // Johnny: I don't see any point in using an uniform for the texture range
+            // since we only have 11 bits of precision on the encoded numbers. 
+            // There's an extra 2 unused on the exponential, but first let's attempt not to use them.
+            append_line(vs_buf, &vs_len, "vTexDimensions1 = vec4(dec_xw[0], dec_yh[0], dec_xw[1], dec_yh[1]);");
+            append_line(vs_buf, &vs_len, "vTexDimensions1 = (vTexDimensions1 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
+            append_line(vs_buf, &vs_len, "vTexSampler1    = vec2(dec_cms[0], dec_cmt[0]);");
+            if (num_samplers == 2) {
+                append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xw[2], dec_yh[2], dec_xw[3], dec_yh[3]);");
+                append_line(vs_buf, &vs_len, "vTexDimensions2 = (vTexDimensions2 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
+                append_line(vs_buf, &vs_len, "vTexSampler2    = vec2(dec_cms[2], dec_cmt[2]);");
+            }
+        }
+    }    
+
     append_line(vs_buf, &vs_len, "gl_Position = aVtxPos;");
     append_line(vs_buf, &vs_len, "}");
 
@@ -215,11 +277,19 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     append_line(fs_buf, &fs_len, "#version 110");
 #else
     append_line(fs_buf, &fs_len, "#version 100");
+    append_line(fs_buf, &fs_len, "#extension GL_OES_standard_derivatives : enable");
     append_line(fs_buf, &fs_len, "precision highp float;");
 #endif
     //append_line(fs_buf, &fs_len, "precision mediump float;");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "varying vec2 vTexCoord;");
+        for (int i = 0, samplers = 1; i < 2; i++) {
+            if (cc_features.used_textures[i]) {
+                fs_len += sprintf(fs_buf + fs_len, "varying vec4 vTexDimensions%d;\n", samplers);
+                fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexSampler%d;\n", samplers);
+                samplers++;
+            }
+        }
     }
     if (cc_features.opt_fog) {
         append_line(fs_buf, &fs_len, "varying vec4 vFog;");
@@ -230,10 +300,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
     }
+#ifndef USE_TEXTURE_ATLAS
     if (cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex1;");
     }
+#endif
 
+#ifndef USE_GLES2
     if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(fs_buf, &fs_len, "uniform int frame_count;");
         append_line(fs_buf, &fs_len, "uniform int window_height;");
@@ -243,15 +316,25 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
         append_line(fs_buf, &fs_len, "}");
     }
+#endif
 
     append_line(fs_buf, &fs_len, "void main() {");
 
+#ifndef USE_TEXTURE_ATLAS
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "vec4 texVal0 = texture2D(uTex0, vTexCoord);");
     }
     if (cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "vec4 texVal1 = texture2D(uTex1, vTexCoord);");
     }
+#else
+    if (cc_features.used_textures[0]) {
+        append_line(fs_buf, &fs_len, "vec4 texVal0 = texture2D(uTex0, vTexDimensions1.xy + (vTexDimensions1.zw * fract(vTexCoord)));");
+    }
+    if (cc_features.used_textures[1]) {
+        append_line(fs_buf, &fs_len, "vec4 texVal1 = texture2D(uTex0, vTexDimensions2.xy + (vTexDimensions2.zw * fract(vTexCoord)));");
+    }
+#endif
 
     append_str(fs_buf, &fs_len, cc_features.opt_alpha ? "vec4 texel = " : "vec3 texel = ");
     if (!cc_features.color_alpha_same && cc_features.opt_alpha) {
@@ -265,9 +348,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     }
     append_line(fs_buf, &fs_len, ";");
 
+
     if (cc_features.opt_texture_edge && cc_features.opt_alpha) {
         append_line(fs_buf, &fs_len, "if (texel.a > 0.3) texel.a = 1.0; else discard;");
     }
+
     // TODO discard if alpha is 0?
     if (cc_features.opt_fog) {
         if (cc_features.opt_alpha) {
@@ -277,9 +362,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         }
     }
 
+#ifndef USE_GLES2
     if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(fs_buf, &fs_len, "texel.a *= floor(random(vec3(floor(gl_FragCoord.xy * (240.0 / float(window_height))), float(frame_count))) + 0.5);");
     }
+#endif
 
     if (cc_features.opt_alpha) {
         append_line(fs_buf, &fs_len, "gl_FragColor = texel;");
@@ -310,6 +397,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         glGetShaderiv(vertex_shader, GL_INFO_LOG_LENGTH, &max_length);
         char error_log[1024];
         fprintf(stderr, "Vertex shader compilation failed\n");
+        fprintf(stderr, "================================\n");
+        fprintf(stderr, vs_buf);
+        fprintf(stderr, "================================\n");
         glGetShaderInfoLog(vertex_shader, max_length, &max_length, &error_log[0]);
         fprintf(stderr, "%s\n", &error_log[0]);
         abort();
@@ -345,6 +435,13 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aTexCoord");
         prg->attrib_sizes[cnt] = 2;
         ++cnt;
+#ifdef USE_TEXTURE_ATLAS
+        if (num_samplers > 0) {
+            prg->attrib_locations[cnt] = glGetAttribLocation(shader_program, "aTexParams");
+            prg->attrib_sizes[cnt] = num_samplers * 2; /* vec2 or vec4 */
+            ++cnt;
+        }
+#endif
     }
 
     if (cc_features.opt_fog) {
@@ -519,6 +616,34 @@ static void gfx_opengl_end_frame(void) {
 static void gfx_opengl_finish_render(void) {
 }
 
+#ifdef USE_TEXTURE_ATLAS
+static void gfx_opengl_bind_virtual_texture_page(void)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, vt_page);
+}
+
+static void gfx_opengl_create_virtual_texture_page(uint16_t dimensions)
+{
+    glGenTextures(1, &vt_page);
+    glBindTexture(GL_TEXTURE_2D, vt_page);
+    glActiveTexture(GL_TEXTURE0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, dimensions, dimensions, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+}
+
+static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x, int y, int width, int height)
+{
+    ProfEmitEventStart("gfx_opengl_upload_virtual_texture");
+    glBindTexture(GL_TEXTURE_2D, vt_page);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+    ProfEmitEventEnd("gfx_opengl_upload_virtual_texture");
+}
+#endif
+
 struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_z_is_from_0_to_1,
     gfx_opengl_unload_shader,
@@ -541,7 +666,12 @@ struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_on_resize,
     gfx_opengl_start_frame,
     gfx_opengl_end_frame,
-    gfx_opengl_finish_render
+    gfx_opengl_finish_render,
+#ifdef USE_TEXTURE_ATLAS
+    gfx_opengl_bind_virtual_texture_page,
+    gfx_opengl_create_virtual_texture_page,
+    gfx_opengl_upload_virtual_texture,
+#endif
 };
 
 #endif
