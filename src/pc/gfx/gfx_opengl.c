@@ -203,7 +203,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         for (int i = 0, samplers = 1; i < 2; i++) {
             if (cc_features.used_textures[i]) {
                 vs_len += sprintf(vs_buf + vs_len, "varying vec4 vTexDimensions%d;\n", samplers);
-                vs_len += sprintf(vs_buf + vs_len, "varying vec2 vTexSampler%d;\n", samplers);
+                vs_len += sprintf(vs_buf + vs_len, "varying vec4 vTexSampler%d;\n", samplers);
                 samplers++;
                 num_floats += 2;
             }
@@ -221,6 +221,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         vs_len += sprintf(vs_buf + vs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
+
+#ifdef USE_TEXTURE_ATLAS
+    // Returns two texture param activator tuples.
+    // e.g.: (is_mirror0, is_clamp0, is_mirror1, is_clamp1)
+    // Normal Repeat operation is implied is_repeat = 1-(is_mirror0+is_clamp0) 
+    append_line(vs_buf, &vs_len,
+        "vec4 cms_cmt(vec2 x) {"
+        "   vec4 temp = vec4(vec2(x[0]), vec2(x[1]));"
+        "   return 1.0 - step(0.1, abs(temp - vec4(2.0, 1.0, 2.0, 1.0)));"
+        "}"
+    );
+#endif
     
     append_line(vs_buf, &vs_len, "void main() {");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
@@ -244,9 +256,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 
         append_line(vs_buf, &vs_len, "bundle_t dec_cms_cmt = e + 127.0;");
         // cmt = (e+BIAS) >> 5
-        append_line(vs_buf, &vs_len, "bundle_t dec_cmt = floor(dec_cms_cmt / 32.0);");
+        append_line(vs_buf, &vs_len, "bundle_t dec_cmt = floor(dec_cms_cmt / 8.0);");
         // cms = ((e+BIAS) >> 1) & 0x3
-        append_line(vs_buf, &vs_len, "bundle_t dec_cms = floor((dec_cms_cmt - dec_cmt * 32.0) / 2.0);");
+        append_line(vs_buf, &vs_len, "bundle_t dec_cms = floor((dec_cms_cmt - dec_cmt * 8.0) / 2.0);");
         // y or height = mant >> 11
         append_line(vs_buf, &vs_len, "bundle_t dec_yh = floor(mant / 2048.0);");
         // x or width = mant & 0xFFF
@@ -260,11 +272,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
             // There's an extra 2 unused on the exponential, but first let's attempt not to use them.
             append_line(vs_buf, &vs_len, "vTexDimensions1 = vec4(dec_xw[0], dec_yh[0], dec_xw[1], dec_yh[1]);");
             append_line(vs_buf, &vs_len, "vTexDimensions1 = (vTexDimensions1 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
-            append_line(vs_buf, &vs_len, "vTexSampler1    = vec2(dec_cms[0], dec_cmt[0]);");
+            append_line(vs_buf, &vs_len, "vTexSampler1    = cms_cmt(vec2(dec_cms[0], dec_cmt[0]));");
             if (num_samplers == 2) {
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xw[2], dec_yh[2], dec_xw[3], dec_yh[3]);");
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = (vTexDimensions2 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
-                append_line(vs_buf, &vs_len, "vTexSampler2    = vec2(dec_cms[2], dec_cmt[2]);");
+                append_line(vs_buf, &vs_len, "vTexSampler2    = cms_cmt(vec2(dec_cms[2], dec_cmt[2]));");
             }
         }
     }    
@@ -286,11 +298,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         for (int i = 0, samplers = 1; i < 2; i++) {
             if (cc_features.used_textures[i]) {
                 fs_len += sprintf(fs_buf + fs_len, "varying vec4 vTexDimensions%d;\n", samplers);
-                fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexSampler%d;\n", samplers);
+                fs_len += sprintf(fs_buf + fs_len, "varying vec4 vTexSampler%d;\n", samplers);
                 samplers++;
             }
         }
     }
+
     if (cc_features.opt_fog) {
         append_line(fs_buf, &fs_len, "varying vec4 vFog;");
     }
@@ -304,6 +317,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     if (cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex1;");
     }
+#else
+    append_line(fs_buf, &fs_len,
+        "vec2 mrrep(vec2 x) {"
+        "   return 1.0 - abs(2.0 * fract(abs(x) * 0.5) - 1.0);"
+        "}"
+    );
 #endif
 
 #ifndef USE_GLES2
@@ -328,11 +347,23 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         append_line(fs_buf, &fs_len, "vec4 texVal1 = texture2D(uTex1, vTexCoord);");
     }
 #else
-    if (cc_features.used_textures[0]) {
-        append_line(fs_buf, &fs_len, "vec4 texVal0 = texture2D(uTex0, vTexDimensions1.xy + (vTexDimensions1.zw * fract(vTexCoord)));");
-    }
-    if (cc_features.used_textures[1]) {
-        append_line(fs_buf, &fs_len, "vec4 texVal1 = texture2D(uTex0, vTexDimensions2.xy + (vTexDimensions2.zw * fract(vTexCoord)));");
+    if (num_samplers > 0) {
+        append_line(fs_buf, &fs_len, "vec2 texCoords;");
+        append_line(fs_buf, &fs_len, "vec2 implied;");
+
+        // See the definition of cms_cmt() to understand this.
+        // We use precompued sampler activators here to avoid calculating them on the
+        // fragment shaders, and to allow us to simd the coordinate params
+        for (int i = 1; i <= num_samplers; i++) {
+            if (cc_features.used_textures[0]) {
+                fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
+                fs_len += sprintf(fs_buf + fs_len, "implied = 1.0-(vTexSampler%d.xz+vTexSampler%d.yw);", i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords += vTexSampler%d.xz * vTexDimensions%d.zw * clamp(vTexCoord, 0.0, 1.0);", i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords += vTexSampler%d.yw * vTexDimensions%d.zw * mrrep(vTexCoord);", i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords += implied          * vTexDimensions%d.zw * fract(vTexCoord);", i);
+                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
+            }
+        }
     }
 #endif
 
@@ -414,6 +445,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         glGetShaderiv(fragment_shader, GL_INFO_LOG_LENGTH, &max_length);
         char error_log[1024];
         fprintf(stderr, "Fragment shader compilation failed\n");
+        fprintf(stderr, "================================\n");
+        fprintf(stderr, fs_buf);
+        fprintf(stderr, "================================\n");
         glGetShaderInfoLog(fragment_shader, max_length, &max_length, &error_log[0]);
         fprintf(stderr, "%s\n", &error_log[0]);
         abort();
