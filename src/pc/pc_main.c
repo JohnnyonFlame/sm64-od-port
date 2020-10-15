@@ -199,7 +199,7 @@ void main_func(void) {
         audio_api = &audio_pulse;
     }
 #endif
-#if HAVE_ALSA
+#if defined(HAVE_ALSA) && !defined(TARGET_OD) && !defined(TARGET_WINDOWS)
     if (audio_api == NULL && audio_alsa.init()) {
         audio_api = &audio_alsa;
     }
