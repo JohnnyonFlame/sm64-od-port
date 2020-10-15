@@ -166,6 +166,7 @@ static unsigned long get_time(void) {
 }
 
 static void gfx_flush(void) {
+    ProfEmitEventStart("gfx_flush");
     if (buf_vbo_len > 0) {
         int num = buf_vbo_num_tris;
         unsigned long t0 = get_time();
@@ -177,15 +178,18 @@ static void gfx_flush(void) {
             printf("f: %d %d\n", num, (int)(t1 - t0));
         }*/
     }
+    ProfEmitEventEnd("gfx_flush");
 }
 
 static struct ShaderProgram *gfx_lookup_or_create_shader_program(uint32_t shader_id) {
+    ProfEmitEventStart("gfx_shader_program");
     struct ShaderProgram *prg = gfx_rapi->lookup_shader(shader_id);
     if (prg == NULL) {
         gfx_rapi->unload_shader(rendering_state.shader_program);
         prg = gfx_rapi->create_and_load_new_shader(shader_id);
         rendering_state.shader_program = prg;
     }
+    ProfEmitEventEnd("gfx_shader_program");
     return prg;
 }
 

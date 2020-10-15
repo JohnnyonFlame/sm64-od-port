@@ -23,6 +23,8 @@ TARGET_N64 ?= 0
 TARGET_WEB ?= 0
 # Build for OpenDingux
 TARGET_OD ?= 1
+# Use profiler or not
+USE_PROFILER ?= 0
 # Compiler to use (ido or gcc)
 COMPILER ?= ido
 
@@ -509,6 +511,10 @@ ifeq ($(TARGET_OD),0)
 CFLAGS := $(OPT_FLAGS) $(INCLUDE_CFLAGS) -D_LANGUAGE_C $(VERSION_CFLAGS) $(MATCH_CFLAGS) $(PLATFORM_CFLAGS) $(GFX_CFLAGS) $(GRUCODE_CFLAGS) -fno-strict-aliasing -fwrapv -march=native
 else
 CFLAGS := $(OPT_FLAGS) $(INCLUDE_CFLAGS) -D_LANGUAGE_C $(VERSION_CFLAGS) $(MATCH_CFLAGS) $(PLATFORM_CFLAGS) $(GFX_CFLAGS) $(GRUCODE_CFLAGS) -fno-strict-aliasing -fwrapv
+endif
+
+ifeq ($(USE_PROFILER),1)
+  CFLAGS += -DUSE_PROFILER
 endif
 
 ASFLAGS := -I include -I $(BUILD_DIR) $(VERSION_ASFLAGS)

@@ -31,6 +31,7 @@
 #include "configfile.h"
 
 #include "compat.h"
+#include "cheapProfiler.h"
 
 #define CONFIG_FILE "sm64config.txt"
 
@@ -79,9 +80,11 @@ void send_display_list(struct SPTask *spTask) {
 #endif
 
 void produce_one_frame(void) {
+    ProfEmitEventStart("frame");
     gfx_start_frame();
     game_loop_one_iteration();
     
+    ProfEmitEventStart("create_next_audio_buffer");
     int samples_left = audio_api->buffered();
     u32 num_audio_samples = samples_left < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
     //printf("Audio samples: %d %u\n", samples_left, num_audio_samples);
@@ -94,9 +97,14 @@ void produce_one_frame(void) {
         create_next_audio_buffer(audio_buffer + i * (num_audio_samples * 2), num_audio_samples);
     }
     //printf("Audio samples before submitting: %d\n", audio_api->buffered());
+    ProfEmitEventEnd("create_next_audio_buffer");
+    ProfEmitEventStart("audio_api->play");
     audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
+    ProfEmitEventEnd("audio_api->play");
     
     gfx_end_frame();
+    ProfEmitEventEnd("frame");
+    ProfSampleFrame();
 }
 
 #ifdef TARGET_WEB

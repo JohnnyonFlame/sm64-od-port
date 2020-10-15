@@ -27,6 +27,7 @@
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "../cheapProfiler.h"
 
 struct ShaderProgram {
     uint32_t shader_id;
@@ -412,12 +413,16 @@ static GLuint gfx_opengl_new_texture(void) {
 }
 
 static void gfx_opengl_select_texture(int tile, GLuint texture_id) {
+    ProfEmitEventStart("glBindTexture");
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
+    ProfEmitEventEnd("glBindTexture");
 }
 
 static void gfx_opengl_upload_texture(const uint8_t *rgba32_buf, int width, int height) {
+    ProfEmitEventStart("glTexImage2D");
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+    ProfEmitEventEnd("glTexImage2D");
 }
 
 static uint32_t gfx_cm_to_opengl(uint32_t val) {
@@ -428,11 +433,13 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
 }
 
 static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+    ProfEmitEventStart("gfx_opengl_set_sampler_parameters");
     glActiveTexture(GL_TEXTURE0 + tile);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_filter ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_filter ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(cms));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gfx_cm_to_opengl(cmt));
+    ProfEmitEventEnd("gfx_opengl_set_sampler_parameters");
 }
 
 static void gfx_opengl_set_depth_test(bool depth_test) {
