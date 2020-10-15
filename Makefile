@@ -53,8 +53,10 @@ ifeq ($(TARGET_N64),0)
       endif
     endif
   else
-    # On others, default to OpenGL
-    ENABLE_OPENGL ?= 1
+
+  # On others, default to OpenGL
+  ENABLE_OPENGL ?= 1
+  
   endif
 
   # Sanity checks
@@ -456,7 +458,7 @@ endif
 # Platform-specific compiler and linker flags
 ifeq ($(TARGET_WINDOWS),1)
   PLATFORM_CFLAGS  := -DTARGET_WINDOWS
-  PLATFORM_LDFLAGS := -lm -lxinput9_1_0 -lole32 -no-pie -mwindowss
+  PLATFORM_LDFLAGS := -lm -lxinput9_1_0 -lole32 -no-pie -mwindows
 endif
 ifeq ($(TARGET_LINUX),1)
   PLATFORM_CFLAGS  := -DTARGET_LINUX `pkg-config --cflags libusb-1.0`
