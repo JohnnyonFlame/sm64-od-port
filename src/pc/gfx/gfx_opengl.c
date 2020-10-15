@@ -358,7 +358,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         // We use precompued sampler activators here to avoid calculating them on the
         // fragment shaders, and to allow us to simd the coordinate params
         for (int i = 1; i <= num_samplers; i++) {
-            if (cc_features.used_textures[0]) {
+            if (cc_features.used_textures[i-1]) {
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord, 0.0, 1.0);", i, i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord);", i, i);
