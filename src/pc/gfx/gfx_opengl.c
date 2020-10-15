@@ -227,8 +227,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     // e.g.: (is_mirror0, is_clamp0, is_mirror1, is_clamp1)
     // Normal Repeat operation is implied is_repeat = 1-(is_mirror0+is_clamp0) 
     append_line(vs_buf, &vs_len,
-        "vec4 cms_cmt(vec2 x) {"
-        "   vec4 temp = vec4(vec2(x[0]), vec2(x[1]));"
+        "vec4 cms_cmt(vec2 cmst) {"
+        "   vec4 temp = cmst.xxyy;"
         "   return 1.0 - step(0.1, abs(temp - vec4(2.0, 1.0, 2.0, 1.0)));"
         "}"
     );
@@ -253,16 +253,12 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         // MAXIMUM_MANTISSA_VALUE = (1<<23)-1 = 8388607.0
         // mantissa = MAXIMUM_MANTISSA_VALUE * (value / 2.0**exponent)) - 1)
         append_line(vs_buf, &vs_len, "bundle_t mant = 8388607.0 * ((aTexParams / p) - bundle_t(1.0));");
-
-        append_line(vs_buf, &vs_len, "bundle_t dec_cms_cmt = e + 127.0;");
-        // cmt = (e+BIAS) >> 5
-        append_line(vs_buf, &vs_len, "bundle_t dec_cmt = floor(dec_cms_cmt / 8.0);");
-        // cms = ((e+BIAS) >> 1) & 0x3
-        append_line(vs_buf, &vs_len, "bundle_t dec_cms = floor((dec_cms_cmt - dec_cmt * 8.0) / 2.0);");
-        // y or height = mant >> 11
-        append_line(vs_buf, &vs_len, "bundle_t dec_yh = floor(mant / 2048.0);");
-        // x or width = mant & 0xFFF
-        append_line(vs_buf, &vs_len, "bundle_t dec_xw = mant - (dec_yh * 2048.0);");
+        // cmst = ((e+BIAS) >> 1)
+        append_line(vs_buf, &vs_len, "bundle_t dec_cmst = floor((e + 127.0) / 2.0);");
+        // width or height = mant >> 11
+        append_line(vs_buf, &vs_len, "bundle_t dec_zw = floor(mant / 2048.0);");
+        // x or y = mant & 0xFFF
+        append_line(vs_buf, &vs_len, "bundle_t dec_xy = mant - (dec_zw * 2048.0);");
 
         // Swizzle all the necessary things into their correct places
         if (num_samplers > 0) {
@@ -270,13 +266,21 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
             // Johnny: I don't see any point in using an uniform for the texture range
             // since we only have 11 bits of precision on the encoded numbers. 
             // There's an extra 2 unused on the exponential, but first let's attempt not to use them.
-            append_line(vs_buf, &vs_len, "vTexDimensions1 = vec4(dec_xw[0], dec_yh[0], dec_xw[1], dec_yh[1]);");
+            append_line(vs_buf, &vs_len, "vTexDimensions1 = vec4(dec_xy.xy, dec_zw.xy);");
             append_line(vs_buf, &vs_len, "vTexDimensions1 = (vTexDimensions1 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
-            append_line(vs_buf, &vs_len, "vTexSampler1    = cms_cmt(vec2(dec_cms[0], dec_cmt[0]));");
+            append_line(vs_buf, &vs_len, "vTexSampler1 = cms_cmt(dec_cmst.xy);");
+
+            // In case we have a mirrored tile, we'll used the pre-uploaded mirrors
+            // For that, we'll fix the dimensions here by pre-multiplying them
+            append_line(vs_buf, &vs_len, "vTexDimensions1.zw *= vTexSampler1.yw + 1.0;"); // Use mirrored images
+            append_line(vs_buf, &vs_len, "vTexCoord          /= vTexSampler1.yw + 1.0;"); // Use mirrored images
             if (num_samplers == 2) {
-                append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xw[2], dec_yh[2], dec_xw[3], dec_yh[3]);");
+                append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xy.zw, dec_zw.zw);");
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = (vTexDimensions2 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
-                append_line(vs_buf, &vs_len, "vTexSampler2    = cms_cmt(vec2(dec_cms[2], dec_cmt[2]));");
+                append_line(vs_buf, &vs_len, "vTexSampler2 = cms_cmt(dec_cmst.zw);");
+
+                // Same here
+                append_line(vs_buf, &vs_len, "vTexDimensions2.zw *= vTexSampler2.yw + 1.0;"); // Use mirrored image
             }
         }
     }    
@@ -349,7 +353,6 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 #else
     if (num_samplers > 0) {
         append_line(fs_buf, &fs_len, "vec2 texCoords;");
-        append_line(fs_buf, &fs_len, "vec2 implied;");
 
         // See the definition of cms_cmt() to understand this.
         // We use precompued sampler activators here to avoid calculating them on the
@@ -357,10 +360,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         for (int i = 1; i <= num_samplers; i++) {
             if (cc_features.used_textures[0]) {
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
-                fs_len += sprintf(fs_buf + fs_len, "implied = 1.0-(vTexSampler%d.xz+vTexSampler%d.yw);", i, i);
-                fs_len += sprintf(fs_buf + fs_len, "texCoords += vTexSampler%d.xz * vTexDimensions%d.zw * clamp(vTexCoord, 0.0, 1.0);", i, i);
-                fs_len += sprintf(fs_buf + fs_len, "texCoords += vTexSampler%d.yw * vTexDimensions%d.zw * mrrep(vTexCoord);", i, i);
-                fs_len += sprintf(fs_buf + fs_len, "texCoords += implied          * vTexDimensions%d.zw * fract(vTexCoord);", i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord, 0.0, 1.0);", i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord);", i, i);
                 fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
             }
         }
@@ -669,11 +670,62 @@ static void gfx_opengl_create_virtual_texture_page(uint16_t dimensions)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, dimensions, dimensions, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 }
 
-static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x, int y, int width, int height)
+static void mirror_horizontal(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
+{
+    uint32_t *src = &rgba32_buf[0];
+    uint32_t *dst_orig = &mirror_buf[0];
+    uint32_t *dst_mror = &mirror_buf[width*2];
+
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            uint32_t fetch = *src++;
+            *dst_orig++ = fetch;
+            *dst_mror-- = fetch;
+        }
+        dst_orig += width;
+        dst_mror += width * 3;
+    }
+}
+
+static void mirror_vertical(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
+{
+    uint32_t *src = &rgba32_buf[0];
+    uint32_t *dst_orig = &mirror_buf[0];
+    uint32_t *dst_mror = &mirror_buf[width*2];
+
+    src = &mirror_buf[0];
+    dst_mror = &mirror_buf[width * (height * 2)];
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            *dst_mror-- = *src++;
+        }
+    }
+}
+
+static void mirror_both(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
+{
+    mirror_horizontal(mirror_buf, rgba32_buf, width, height);
+    mirror_vertical(mirror_buf, rgba32_buf, width*2, height);
+}
+
+static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x, 
+    int y, int width, int height, int h_mirror, int v_mirror)
 {
     ProfEmitEventStart("gfx_opengl_upload_virtual_texture");
+    int has_mirrors = h_mirror || v_mirror;
+
+    //glBindTexture(GL_TEXTURE_2D, vt_page);
+    uint32_t mirror_buf[4096 * 4];
+    if (has_mirrors) {
+        if (h_mirror && v_mirror) mirror_both(mirror_buf, rgba32_buf, width, height);
+        else if (h_mirror)  mirror_horizontal(mirror_buf, rgba32_buf, width, height);
+        else if (v_mirror)    mirror_vertical(mirror_buf, rgba32_buf, width, height);
+    }
+
     glBindTexture(GL_TEXTURE_2D, vt_page);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, 
+        !h_mirror ? width : width * 2, !v_mirror ? height : height * 2, 
+        GL_RGBA, GL_UNSIGNED_BYTE, has_mirrors ? mirror_buf : rgba32_buf);
     ProfEmitEventEnd("gfx_opengl_upload_virtual_texture");
 }
 #endif

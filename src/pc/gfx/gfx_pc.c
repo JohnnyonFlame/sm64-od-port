@@ -43,19 +43,19 @@ typedef union {
     } fbits;
     struct {
         unsigned int u: 11;
-        unsigned int v: 11;
+        unsigned int s: 11;
         unsigned int padding0: 1;
         unsigned int always_one: 1;
         unsigned int cms: 2;
-        unsigned int cmt: 2;
-        unsigned int padding1: 4;
+        unsigned int padding1: 6;
     } sampler_0;
     struct {
-        unsigned int s: 11;
+        unsigned int v: 11;
         unsigned int t: 11;
         unsigned int padding0: 1;
         unsigned int always_one: 1;
-        unsigned int padding1: 8;
+        unsigned int cmt: 2;
+        unsigned int padding1: 6;
     } sampler_1;
 } encFloat_t;
 #endif
@@ -367,19 +367,25 @@ static void import_texture_finish(uint8_t *buf, int tile, uint16_t width, uint16
 #else
     // Deal with failure gracefully - maybe invalidate a few textures for more space
     uint32_t v_id = rendering_state.textures[tile]->texture_id;
-    
-    if (!atlas_allocate_vtex_space(atlas, v_id, width, height))
+
+    int h_mirror = rdp.texture_tile.cms == G_TX_MIRROR;
+    int v_mirror = rdp.texture_tile.cmt == G_TX_MIRROR;
+
+    // Allocate enough memory for the mirrored set. This allows us to simplify
+    // the fragment shader texture fetches a little.
+    if (!atlas_allocate_vtex_space(atlas, v_id, 
+        !h_mirror ? width : width*2, !v_mirror ? height : height * 2))
         abort();
 
     uint16_t xyzw[4];
     if (!atlas_get_vtex_xywh_coords(atlas, v_id, 0, &xyzw))
         abort();
 
-    gfx_rapi->upload_virtual_texture(buf, xyzw[0], xyzw[1], xyzw[2], xyzw[3]);
+    gfx_rapi->upload_virtual_texture(buf, xyzw[0], xyzw[1], width, height, h_mirror, v_mirror);
     rendering_state.textures[tile]->x = xyzw[0];
     rendering_state.textures[tile]->y = xyzw[1];
-    rendering_state.textures[tile]->width = xyzw[2];
-    rendering_state.textures[tile]->height = xyzw[3];
+    rendering_state.textures[tile]->width = width;
+    rendering_state.textures[tile]->height = height;
 #endif
 }
 
@@ -941,13 +947,14 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
 #ifdef USE_TEXTURE_ATLAS
                 encFloat_t *sampler_params = &rendering_state.textures[i]->enc_sampler_params[0];
                 sampler_params[0].sampler_0.u = rendering_state.textures[i]->x;
-                sampler_params[0].sampler_0.v = rendering_state.textures[i]->y;
+                sampler_params[0].sampler_0.s = rendering_state.textures[i]->width;
                 sampler_params[0].sampler_0.always_one = 1; // DON'T REMOVE ME
                 sampler_params[0].sampler_0.cms = rdp.texture_tile.cms;
-                sampler_params[0].sampler_0.cmt = rdp.texture_tile.cmt;
-                sampler_params[1].sampler_1.s = rendering_state.textures[i]->width;
+
+                sampler_params[1].sampler_1.v = rendering_state.textures[i]->y;
                 sampler_params[1].sampler_1.t = rendering_state.textures[i]->height;
                 sampler_params[1].sampler_1.always_one = 1; // DON'T REMOVE ME
+                sampler_params[1].sampler_1.cmt = rdp.texture_tile.cmt;
 #endif
             }
         }

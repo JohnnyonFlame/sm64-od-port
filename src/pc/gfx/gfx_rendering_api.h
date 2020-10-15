@@ -33,7 +33,7 @@ struct GfxRenderingAPI {
 #ifdef USE_TEXTURE_ATLAS
     void (*bind_virtual_texture_page)(void);
     void (*create_virtual_texture_page)(uint16_t dimensions);
-    void (*upload_virtual_texture)(const uint8_t *rgba32_buf, int x, int y, int width, int height);
+    void (*upload_virtual_texture)(const uint8_t *rgba32_buf, int x, int y, int width, int height, int h_mirror, int v_mirror);
 #endif
 };
 
