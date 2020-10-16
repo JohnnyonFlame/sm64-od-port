@@ -110,20 +110,27 @@ void ProfSampleFrame()
         return;
     }
 
-    //Begin a data-point
-    #define START_DP ((i == 0) ? "{": "")
-    //End a data-point
-    #define END_DP ((i == events_allocated-1) ? "}\n": ", ") 
-
+    // Keeps track if we need commas or something for the next character
+    char next = '{';
     for (int i = 0; i < events_allocated; i++) {
         EventSlot *ev = &event_slots[i];
         if (ev->needs_sampling)
             fprintf(stderr, "Frame ended with event %s end still pending.\n", ev->label);
 
-        fprintf(f, "%s\"%s\": %.03f%s", START_DP, ev->label, ev->total, END_DP);
+        // Only emit samples for events with significant time spent in a frame.
+        if (ev->total > 0.1) {
+            fprintf(f, "%c \"%s\": %.1f", next, ev->label, ev->total);
+            next = ',';
+        }
         ev->total = 0;
     }
-    #undef HAS_LF_OR_COMMA
+
+    // End the current sampled frame, we can (but likely won't) have zero 
+    // usable event samples in a frame, specially since the frametime itself is
+    // one such sample.
+    if (next == '{')
+        fputc(next, f);
+    fprintf(f, " }\n");
 
     fflush(f);
     cur_event_frame++;
