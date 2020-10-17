@@ -21,6 +21,8 @@
 #include "thread6.h"
 #include <prevent_bss_reordering.h>
 
+#include "../pc/cheapProfiler.h"
+
 // FIXME: I'm not sure all of these variables belong in this file, but I don't
 // know of a good way to split them
 struct Controller gControllers[3];
@@ -655,6 +657,7 @@ void game_loop_one_iteration(void) {
 #endif
         }
         profiler_log_thread5_time(THREAD5_START);
+        ProfEmitEventStart("game_tick");
 
         // if any controllers are plugged in, start read the data for when
         // read_controller_inputs is called later.
@@ -669,6 +672,7 @@ void game_loop_one_iteration(void) {
         config_gfx_pool();
         read_controller_inputs();
         levelCommandAddr = level_script_execute(levelCommandAddr);
+        ProfEmitEventEnd("game_tick");
         display_and_vsync();
 
         // when debug info is enabled, print the "BUF %d" information.
