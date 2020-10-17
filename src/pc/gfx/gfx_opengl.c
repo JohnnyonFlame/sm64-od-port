@@ -102,7 +102,7 @@ static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
             glGenBuffers(1, &new_prg->vbo);
             glBindVertexArrayOES(new_prg->vao);
             glBindBuffer(GL_ARRAY_BUFFER, new_prg->vbo);
-    gfx_opengl_vertex_array_set_attribs(new_prg);
+            gfx_opengl_vertex_array_set_attribs(new_prg);
         }
         else {
             glBindVertexArrayOES(new_prg->vao);
@@ -221,14 +221,16 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     append_line(vs_buf, &vs_len, "attribute vec4 aVtxPos;");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(vs_buf, &vs_len, "attribute vec2 aTexCoord;");
+#ifndef USE_TEXTURE_ATLAS
         append_line(vs_buf, &vs_len, "varying vec2 vTexCoord;");
-#ifdef USE_TEXTURE_ATLAS
+#else
         vs_len += sprintf(vs_buf + vs_len, "#define bundle_t %s\n", aTexParams_type[num_samplers]);
         vs_len += sprintf(vs_buf + vs_len, "attribute bundle_t aTexParams;\n");
         for (int i = 0, samplers = 1; i < 2; i++) {
             if (cc_features.used_textures[i]) {
                 vs_len += sprintf(vs_buf + vs_len, "varying vec4 vTexDimensions%d;\n", samplers);
                 vs_len += sprintf(vs_buf + vs_len, "varying vec4 vTexSampler%d;\n", samplers);
+                vs_len += sprintf(vs_buf + vs_len, "varying vec2 vTexCoord%d;\n", samplers);
                 samplers++;
                 num_floats += 2;
             }
@@ -260,9 +262,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 #endif
     
     append_line(vs_buf, &vs_len, "void main() {");
+#ifndef USE_TEXTURE_ATLAS
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(vs_buf, &vs_len, "vTexCoord = aTexCoord;");
     }
+#endif
     if (cc_features.opt_fog) {
         append_line(vs_buf, &vs_len, "vFog = aFog;");
     }
@@ -298,14 +302,15 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
             // In case we have a mirrored tile, we'll used the pre-uploaded mirrors
             // For that, we'll fix the dimensions here by pre-multiplying them
             append_line(vs_buf, &vs_len, "vTexDimensions1.zw *= vTexSampler1.yw + 1.0;"); // Use mirrored images
-            append_line(vs_buf, &vs_len, "vTexCoord          /= vTexSampler1.yw + 1.0;"); // Use mirrored images
+            append_line(vs_buf, &vs_len, "vTexCoord1 = aTexCoord / (vTexSampler1.yw + 1.0);"); // Use mirrored images
             if (num_samplers == 2) {
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xy.zw, dec_zw.zw);");
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = (vTexDimensions2 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
                 append_line(vs_buf, &vs_len, "vTexSampler2 = cms_cmt(dec_cmst.zw);");
 
                 // Same here
-                append_line(vs_buf, &vs_len, "vTexDimensions2.zw *= vTexSampler2.yw + 1.0;"); // Use mirrored image
+                append_line(vs_buf, &vs_len, "vTexDimensions2.zw *= vTexSampler2.yw + 1.0;"); // Use mirrored images
+                append_line(vs_buf, &vs_len, "vTexCoord2 = aTexCoord / (vTexSampler2.yw + 1.0);"); // Use mirrored images
             }
         }
     }    
@@ -323,14 +328,18 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 #endif
     //append_line(fs_buf, &fs_len, "precision mediump float;");
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
+#ifndef USE_TEXTURE_ATLAS
         append_line(fs_buf, &fs_len, "varying vec2 vTexCoord;");
+#else
         for (int i = 0, samplers = 1; i < 2; i++) {
             if (cc_features.used_textures[i]) {
                 fs_len += sprintf(fs_buf + fs_len, "varying vec4 vTexDimensions%d;\n", samplers);
                 fs_len += sprintf(fs_buf + fs_len, "varying vec4 vTexSampler%d;\n", samplers);
+                fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexCoord%d;\n", samplers);
                 samplers++;
             }
         }
+#endif
     }
 
     if (cc_features.opt_fog) {
@@ -385,8 +394,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         for (int i = 1; i <= num_samplers; i++) {
             if (cc_features.used_textures[i-1]) {
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
-                fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord, 0.0, 1.0);", i, i);
-                fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord);", i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord%d, 0.0, 1.0);", i, i, i);
+                fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord%d);", i, i, i);
                 fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
             }
         }
@@ -656,7 +665,7 @@ static void gfx_opengl_init(void) {
     } else {
         has_vao_support = 1;
     }
-    
+
     glGenBuffers(1, &opengl_vbo);
     
     glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
