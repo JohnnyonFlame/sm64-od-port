@@ -389,8 +389,8 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         append_line(fs_buf, &fs_len, "vec2 texCoords;");
 
         // See the definition of cms_cmt() to understand this.
-        // We use precompued sampler activators here to avoid calculating them on the
-        // fragment shaders, and to allow us to simd the coordinate params
+        // We use precomputed sampler activators here to avoid calculating them 
+        // on the fragment shaders, and to allow us to simd the coordinate params.
         for (int i = 1; i <= num_samplers; i++) {
             if (cc_features.used_textures[i-1]) {
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
