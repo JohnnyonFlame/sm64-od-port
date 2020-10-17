@@ -747,7 +747,6 @@ static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x,
     ProfEmitEventStart("gfx_opengl_upload_virtual_texture");
     int has_mirrors = h_mirror || v_mirror;
 
-    //glBindTexture(GL_TEXTURE_2D, vt_page);
     uint32_t mirror_buf[4096 * 4];
     if (has_mirrors) {
         if (h_mirror && v_mirror) mirror_both(mirror_buf, rgba32_buf, width, height);
