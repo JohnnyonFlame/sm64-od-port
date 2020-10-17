@@ -323,7 +323,6 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     append_line(fs_buf, &fs_len, "#version 110");
 #else
     append_line(fs_buf, &fs_len, "#version 100");
-    append_line(fs_buf, &fs_len, "#extension GL_OES_standard_derivatives : enable");
     append_line(fs_buf, &fs_len, "precision highp float;");
 #endif
     //append_line(fs_buf, &fs_len, "precision mediump float;");
