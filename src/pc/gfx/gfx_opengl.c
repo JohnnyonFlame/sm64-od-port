@@ -21,9 +21,13 @@
 #include "SDL_opengl.h"
 #else
 #include <SDL2/SDL.h>
-#define GL_GLEXT_PROTOTYPES 1
+//#define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengles2.h>
 #endif
+
+static int has_vao_support = 0;
+static PFNGLBINDVERTEXARRAYOESPROC glBindVertexArrayOES;
+static PFNGLGENVERTEXARRAYSOESPROC glGenVertexArraysOES;
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
@@ -41,6 +45,8 @@ struct ShaderProgram {
     bool used_noise;
     GLint frame_count_location;
     GLint window_height_location;
+    GLuint vbo, vao;
+    bool init;
 };
 
 static struct ShaderProgram shader_program_pool[64];
@@ -77,6 +83,9 @@ static void gfx_opengl_set_uniforms(struct ShaderProgram *prg) {
 }
 
 static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
+    if (has_vao_support)
+        return;
+    
     if (old_prg != NULL) {
         for (int i = 0; i < old_prg->num_attribs; i++) {
             glDisableVertexAttribArray(old_prg->attrib_locations[i]);
@@ -86,7 +95,23 @@ static void gfx_opengl_unload_shader(struct ShaderProgram *old_prg) {
 
 static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
     glUseProgram(new_prg->opengl_program_id);
+    if (has_vao_support) {
+        if (!new_prg->init) {
+            new_prg->init = 1;
+            glGenVertexArraysOES(1, &new_prg->vao);
+            glGenBuffers(1, &new_prg->vbo);
+            glBindVertexArrayOES(new_prg->vao);
+            glBindBuffer(GL_ARRAY_BUFFER, new_prg->vbo);
     gfx_opengl_vertex_array_set_attribs(new_prg);
+        }
+        else {
+            glBindVertexArrayOES(new_prg->vao);
+            glBindBuffer(GL_ARRAY_BUFFER, new_prg->vbo);
+        }
+    } else {
+        gfx_opengl_vertex_array_set_attribs(new_prg);
+    }
+
     gfx_opengl_set_uniforms(new_prg);
 }
 
@@ -500,6 +525,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     prg->used_textures[1] = cc_features.used_textures[1];
     prg->num_floats = num_floats;
     prg->num_attribs = cnt;
+    prg->init = 0;
 
     gfx_opengl_load_shader(prg);
 
@@ -623,6 +649,13 @@ static void gfx_opengl_init(void) {
 #if FOR_WINDOWS
     glewInit();
 #endif
+    glGenVertexArraysOES = SDL_GL_GetProcAddress("glGenVertexArraysOES");
+    glBindVertexArrayOES = SDL_GL_GetProcAddress("glBindVertexArrayOES");
+    if (!glGenVertexArraysOES || !glBindVertexArrayOES) {
+        printf("Missing GL_OES_vertex_array_object, falling back.\n");
+    } else {
+        has_vao_support = 1;
+    }
     
     glGenBuffers(1, &opengl_vbo);
     
