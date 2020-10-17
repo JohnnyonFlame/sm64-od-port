@@ -296,7 +296,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
             // since we only have 11 bits of precision on the encoded numbers. 
             // There's an extra 2 unused on the exponential, but first let's attempt not to use them.
             append_line(vs_buf, &vs_len, "vTexDimensions1 = vec4(dec_xy.xy, dec_zw.xy);");
-            append_line(vs_buf, &vs_len, "vTexDimensions1 = (vTexDimensions1 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
+            append_line(vs_buf, &vs_len, "vTexDimensions1 = vTexDimensions1 / 2048.0;");
             append_line(vs_buf, &vs_len, "vTexSampler1 = cms_cmt(dec_cmst.xy);");
 
             // In case we have a mirrored tile, we'll used the pre-uploaded mirrors
@@ -305,7 +305,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
             append_line(vs_buf, &vs_len, "vTexCoord1 = aTexCoord / (vTexSampler1.yw + 1.0);"); // Use mirrored images
             if (num_samplers == 2) {
                 append_line(vs_buf, &vs_len, "vTexDimensions2 = vec4(dec_xy.zw, dec_zw.zw);");
-                append_line(vs_buf, &vs_len, "vTexDimensions2 = (vTexDimensions2 + vec4(0.5, 0.5, -0.5, -0.5)) / 2048.0;");
+                append_line(vs_buf, &vs_len, "vTexDimensions2 = vTexDimensions2 / 2048.0;");
                 append_line(vs_buf, &vs_len, "vTexSampler2 = cms_cmt(dec_cmst.zw);");
 
                 // Same here
@@ -361,6 +361,24 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         "   return 1.0 - abs(2.0 * fract(abs(x) * 0.5) - 1.0);"
         "}"
     );
+
+    /* Software texture filtering - from sm64ex port */
+    append_line(fs_buf, &fs_len, "#define TEX_OFFSET(off) texture2D(tex, texCoord - (off)/texSize)");
+    append_line(fs_buf, &fs_len, "vec4 filter3point(in sampler2D tex, in vec2 texCoord, in vec2 texSize) {");
+    append_line(fs_buf, &fs_len, "  vec2 offset = fract(texCoord*texSize - vec2(0.5));");
+    append_line(fs_buf, &fs_len, "  offset -= step(1.0, offset.x + offset.y);");
+    append_line(fs_buf, &fs_len, "  vec4 c0 = TEX_OFFSET(offset);");
+    append_line(fs_buf, &fs_len, "  vec4 c1 = TEX_OFFSET(vec2(offset.x - sign(offset.x), offset.y));");
+    append_line(fs_buf, &fs_len, "  vec4 c2 = TEX_OFFSET(vec2(offset.x, offset.y - sign(offset.y)));");
+    append_line(fs_buf, &fs_len, "  return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);");
+    append_line(fs_buf, &fs_len, "}");
+    //append_line(fs_buf, &fs_len, "vec4 sampleTex(in sampler2D tex, in vec2 uv, in vec2 texSize, in bool dofilter) {");
+    append_line(fs_buf, &fs_len, "vec4 sampleTex(in sampler2D tex, in vec2 uv, in vec2 texSize) {");
+    //append_line(fs_buf, &fs_len, "if (dofilter)");
+    append_line(fs_buf, &fs_len, "return filter3point(tex, uv, texSize);");
+    //append_line(fs_buf, &fs_len, "else");
+    //append_line(fs_buf, &fs_len, "return texture2D(tex, uv);");
+    append_line(fs_buf, &fs_len, "}");
 #endif
 
 #ifndef USE_GLES2
@@ -396,7 +414,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord%d, 0.0, 1.0);", i, i, i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord%d);", i, i, i);
-                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
+                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = sampleTex(uTex0, texCoords, vec2(2048.0));", i-1);
             }
         }
     }
@@ -716,38 +734,74 @@ static void mirror_horizontal(uint32_t *mirror_buf, uint32_t *rgba32_buf, int wi
 {
     uint32_t *src = &rgba32_buf[0];
     uint32_t *dst_orig = &mirror_buf[0];
-    uint32_t *dst_mror = &mirror_buf[width*2];
+    uint32_t *dst_mror = &mirror_buf[width*2 + 2];
 
     for (int i = 0; i < height; i++) {
+        /* Fetch for left/right borders */
+        uint32_t fetch = *src;
+        
+        *dst_orig++ = fetch;
+        *dst_mror-- = fetch;
+
         for (int j = 0; j < width; j++) {
-            uint32_t fetch = *src++;
+            // Fill inner buffers
+            fetch = *src++;
             *dst_orig++ = fetch;
             *dst_mror-- = fetch;
         }
-        dst_orig += width;
-        dst_mror += width * 3;
+        dst_orig +=  width + 1;      /* line pitch + border   */
+        dst_mror += (width + 1) * 3; /* same as above, but 3x */
     }
 }
 
 static void mirror_vertical(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
 {
+    // Virtual Stride - or "stride with added borders"
+    uint32_t v_stride = width + 2;
     uint32_t *src = &rgba32_buf[0];
-    uint32_t *dst_orig = &mirror_buf[0];
-    uint32_t *dst_mror = &mirror_buf[width*2];
+    uint32_t *dst = &mirror_buf[v_stride * (height * 2)];
 
-    src = &mirror_buf[0];
-    dst_mror = &mirror_buf[width * (height * 2)];
     for (int i = 0; i < height; i++) {
+        uint32_t fetch;
+        *dst-- = *src;
         for (int j = 0; j < width; j++) {
-            *dst_mror-- = *src++;
+            fetch = *src++;
+            *dst-- = fetch;
         }
+        *dst-- = fetch;
     }
 }
 
 static void mirror_both(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
 {
+    // Usual horizontal mirroring
     mirror_horizontal(mirror_buf, rgba32_buf, width, height);
-    mirror_vertical(mirror_buf, rgba32_buf, width*2, height);
+
+    // Virtual Stride - or "stride with added borders"
+    uint32_t v_stride = width*2 + 2;
+    uint32_t *src = &mirror_buf[0];
+    uint32_t *dst = &mirror_buf[v_stride * (height * 2)];
+
+    // Border-less vertical mirroring
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < v_stride; j++) {
+            *dst-- = *src++;
+        }
+    }
+}
+
+static void only_borders(uint32_t *mirror_buf, uint32_t *rgba32_buf, int width, int height)
+{
+    uint32_t *src = &rgba32_buf[0];
+    uint32_t *dst = &mirror_buf[0];
+
+    for (int i = 0; i < height; i++) {
+        *dst++ = *src;
+        for (int j = 0; j < width; j++) {
+            *dst++ = *src++;
+        }
+        *dst++ = *(src-1);
+    }
 }
 
 static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x, 
@@ -756,17 +810,26 @@ static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x,
     ProfEmitEventStart("gfx_opengl_upload_virtual_texture");
     int has_mirrors = h_mirror || v_mirror;
 
-    uint32_t mirror_buf[4096 * 4];
-    if (has_mirrors) {
-        if (h_mirror && v_mirror) mirror_both(mirror_buf, rgba32_buf, width, height);
-        else if (h_mirror)  mirror_horizontal(mirror_buf, rgba32_buf, width, height);
-        else if (v_mirror)    mirror_vertical(mirror_buf, rgba32_buf, width, height);
-    }
+    // Full size for mirror + 3x borders
+    uint32_t mirror_buf[4096 * 4 + ((63-1) * 4)];
 
+    int v_stride = 2 + ((!h_mirror) ? width  : width  * 2);
+    int v_height = 2 + ((!v_mirror) ? height : height * 2);
+    uint32_t *mirror_buf_head = mirror_buf + v_height * v_stride; 
+
+    if (h_mirror && v_mirror) mirror_both(&mirror_buf[v_stride], rgba32_buf, width, height);
+    else if (h_mirror)  mirror_horizontal(&mirror_buf[v_stride], rgba32_buf, width, height);
+    else if (v_mirror)    mirror_vertical(&mirror_buf[v_stride], rgba32_buf, width, height);
+    else                     only_borders(&mirror_buf[v_stride], rgba32_buf, width, height);
+
+    // Create the top and bottom mirrors, respectively.
+    memcpy(mirror_buf, mirror_buf + v_stride, v_stride * sizeof(uint32_t));
+    memcpy(mirror_buf_head - v_stride, mirror_buf_head - v_stride*2, v_stride * sizeof(uint32_t));
+
+    // Upload texture page
     glBindTexture(GL_TEXTURE_2D, vt_page);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, 
-        !h_mirror ? width : width * 2, !v_mirror ? height : height * 2, 
-        GL_RGBA, GL_UNSIGNED_BYTE, has_mirrors ? mirror_buf : rgba32_buf);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x - 1, y - 1, v_stride, v_height, GL_RGBA, GL_UNSIGNED_BYTE, mirror_buf);
+
     ProfEmitEventEnd("gfx_opengl_upload_virtual_texture");
 }
 #endif
