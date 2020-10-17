@@ -673,7 +673,6 @@ void game_loop_one_iteration(void) {
         read_controller_inputs();
         levelCommandAddr = level_script_execute(levelCommandAddr);
         ProfEmitEventEnd("game_tick");
-        display_and_vsync();
 
         // when debug info is enabled, print the "BUF %d" information.
         if (gShowDebugText) {

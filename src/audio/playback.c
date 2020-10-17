@@ -1020,6 +1020,11 @@ void reclaim_notes(void) {
         note = &gNotes[i];
         if (note->parentLayer != NO_LAYER) {
             cond = FALSE;
+            
+            // Work around an ASync Audio crash when the thread is too fast
+            if (!note->priority)
+                continue;
+            
             if (!note->parentLayer->enabled && note->priority >= NOTE_PRIORITY_MIN) {
                 cond = TRUE;
             } else if (note->parentLayer->seqChannel == NULL) {

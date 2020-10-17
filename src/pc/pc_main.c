@@ -69,8 +69,6 @@ void send_display_list(struct SPTask *spTask) {
     gfx_run((Gfx *)spTask->task.t.data_ptr);
 }
 
-#define printf
-
 #ifdef VERSION_EU
 #define SAMPLES_HIGH 656
 #define SAMPLES_LOW 640
@@ -79,12 +77,65 @@ void send_display_list(struct SPTask *spTask) {
 #define SAMPLES_LOW 528
 #endif
 
+#include <SDL2/SDL.h>
+
+SDL_mutex *snd_mutex = NULL;
+SDL_Thread *snd_thread = NULL;
+int snd_thread_status = -1;
+extern s32 gAudioFrameCount;
+extern s32 sGameLoopTicked;
+extern u32 gAudioRandom;
+extern u64 *gAudioCmdBuffers[2];
+
+int sdl_snd_dispatch_fn(void *ptr)
+{
+    while (snd_thread_status < 0)
+        SDL_Delay(0);
+
+    while (true) {
+        if (snd_thread_status > 0) 
+            return 1;
+
+        if (audio_api->buffered() >= audio_api->get_desired_buffered()) {
+            SDL_Delay(16);
+            continue;
+        }
+
+        // Audio Critical Section
+        SDL_LockMutex(snd_mutex);
+
+        int samples_left = audio_api->buffered();
+        u32 num_audio_samples = samples_left < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
+        //printf("Audio samples: %d %u\n", samples_left, num_audio_samples);
+        s16 audio_buffer[SAMPLES_HIGH * 2 * 2];
+        for (int i = 0; i < 2; i++) {
+            /*if (audio_cnt-- == 0) {
+                audio_cnt = 2;
+            }
+            u32 num_audio_samples = audio_cnt < 2 ? 528 : 544;*/
+            create_next_audio_buffer(audio_buffer + i * (num_audio_samples * 2), num_audio_samples);
+        }
+        //printf("Audio samples before submitting: %d\n", audio_api->buffered());
+        audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
+        SDL_UnlockMutex(snd_mutex); 
+
+    }
+
+    return 0;
+}
+
 void produce_one_frame(void) {
     ProfEmitEventStart("frame");
     gfx_start_frame();
-    game_loop_one_iteration();
     
-    ProfEmitEventStart("create_next_audio_buffer");
+    SDL_LockMutex(snd_mutex);
+        game_loop_one_iteration();
+    SDL_UnlockMutex(snd_mutex);
+    snd_thread_status = 0;
+
+    display_and_vsync();
+    
+#if 0
     int samples_left = audio_api->buffered();
     u32 num_audio_samples = samples_left < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
     //printf("Audio samples: %d %u\n", samples_left, num_audio_samples);
@@ -97,10 +148,8 @@ void produce_one_frame(void) {
         create_next_audio_buffer(audio_buffer + i * (num_audio_samples * 2), num_audio_samples);
     }
     //printf("Audio samples before submitting: %d\n", audio_api->buffered());
-    ProfEmitEventEnd("create_next_audio_buffer");
-    ProfEmitEventStart("audio_api->play");
     audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
-    ProfEmitEventEnd("audio_api->play");
+#endif    
     
     gfx_end_frame();
     ProfEmitEventEnd("frame");
@@ -207,6 +256,10 @@ void main_func(void) {
 #if defined(TARGET_WEB) || defined(TARGET_OD)
     if (audio_api == NULL && audio_sdl.init()) {
         audio_api = &audio_sdl;
+        if (!snd_thread) {
+            snd_mutex = SDL_CreateMutex();
+            snd_thread = SDL_CreateThread(sdl_snd_dispatch_fn, "th_snd", (void*)NULL);
+        }
     }
 #endif
     if (audio_api == NULL) {
