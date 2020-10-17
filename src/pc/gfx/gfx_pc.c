@@ -386,6 +386,17 @@ static void import_texture_finish(uint8_t *buf, int tile, uint16_t width, uint16
     rendering_state.textures[tile]->y = xyzw[1];
     rendering_state.textures[tile]->width = width;
     rendering_state.textures[tile]->height = height;
+
+    encFloat_t *sampler_params = &rendering_state.textures[tile]->enc_sampler_params[0];
+    sampler_params[0].sampler_0.u = rendering_state.textures[tile]->x;
+    sampler_params[0].sampler_0.s = rendering_state.textures[tile]->width;
+    sampler_params[0].sampler_0.always_one = 1; // DON'T REMOVE ME
+    sampler_params[0].sampler_0.cms = rdp.texture_tile.cms;
+
+    sampler_params[1].sampler_1.v = rendering_state.textures[tile]->y;
+    sampler_params[1].sampler_1.t = rendering_state.textures[tile]->height;
+    sampler_params[1].sampler_1.always_one = 1; // DON'T REMOVE ME
+    sampler_params[1].sampler_1.cmt = rdp.texture_tile.cmt;
 #endif
 }
 
@@ -944,18 +955,6 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
                 rendering_state.textures[i]->linear_filter = linear_filter;
                 rendering_state.textures[i]->cms = rdp.texture_tile.cms;
                 rendering_state.textures[i]->cmt = rdp.texture_tile.cmt;
-#ifdef USE_TEXTURE_ATLAS
-                encFloat_t *sampler_params = &rendering_state.textures[i]->enc_sampler_params[0];
-                sampler_params[0].sampler_0.u = rendering_state.textures[i]->x;
-                sampler_params[0].sampler_0.s = rendering_state.textures[i]->width;
-                sampler_params[0].sampler_0.always_one = 1; // DON'T REMOVE ME
-                sampler_params[0].sampler_0.cms = rdp.texture_tile.cms;
-
-                sampler_params[1].sampler_1.v = rendering_state.textures[i]->y;
-                sampler_params[1].sampler_1.t = rendering_state.textures[i]->height;
-                sampler_params[1].sampler_1.always_one = 1; // DON'T REMOVE ME
-                sampler_params[1].sampler_1.cmt = rdp.texture_tile.cmt;
-#endif
             }
         }
     }
