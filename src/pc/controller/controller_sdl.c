@@ -136,9 +136,6 @@ static void controller_sdl_read(OSContPad *pad) {
     int16_t leftx = SDL_JoystickGetAxis(sdl_joy, 0);
     int16_t lefty = SDL_JoystickGetAxis(sdl_joy, 1);
 
-    if (lefty == -32768) {
-        lefty = 32767;
-    }
     uint32_t magnitude_sq = (uint32_t)(leftx * leftx) + (uint32_t)(lefty * lefty);
     if (magnitude_sq > (uint32_t)(DEADZONE * DEADZONE)) {
         pad->stick_x = leftx / 0x100;
