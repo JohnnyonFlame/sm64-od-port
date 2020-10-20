@@ -355,29 +355,6 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex1;");
     }
 #else
-    append_line(fs_buf, &fs_len,
-        "vec2 mrrep(vec2 x) {"
-        "   return 1.0 - abs(2.0 * fract(abs(x) * 0.5) - 1.0);"
-        "}"
-    );
-
-    /* Software texture filtering - from sm64ex port */
-    append_line(fs_buf, &fs_len, "#define TEX_OFFSET(off) texture2D(tex, texCoord - (off)/texSize)");
-    append_line(fs_buf, &fs_len, "vec4 filter3point(in sampler2D tex, in vec2 texCoord, in vec2 texSize) {");
-    append_line(fs_buf, &fs_len, "  vec2 offset = fract(texCoord*texSize - vec2(0.5));");
-    append_line(fs_buf, &fs_len, "  offset -= step(1.0, offset.x + offset.y);");
-    append_line(fs_buf, &fs_len, "  vec4 c0 = TEX_OFFSET(offset);");
-    append_line(fs_buf, &fs_len, "  vec4 c1 = TEX_OFFSET(vec2(offset.x - sign(offset.x), offset.y));");
-    append_line(fs_buf, &fs_len, "  vec4 c2 = TEX_OFFSET(vec2(offset.x, offset.y - sign(offset.y)));");
-    append_line(fs_buf, &fs_len, "  return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);");
-    append_line(fs_buf, &fs_len, "}");
-    //append_line(fs_buf, &fs_len, "vec4 sampleTex(in sampler2D tex, in vec2 uv, in vec2 texSize, in bool dofilter) {");
-    append_line(fs_buf, &fs_len, "vec4 sampleTex(in sampler2D tex, in vec2 uv, in vec2 texSize) {");
-    //append_line(fs_buf, &fs_len, "if (dofilter)");
-    append_line(fs_buf, &fs_len, "return filter3point(tex, uv, texSize);");
-    //append_line(fs_buf, &fs_len, "else");
-    //append_line(fs_buf, &fs_len, "return texture2D(tex, uv);");
-    append_line(fs_buf, &fs_len, "}");
 #endif
 
 #ifndef USE_GLES2
@@ -413,7 +390,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord%d, 0.0, 1.0);", i, i, i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord%d);", i, i, i);
-                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = sampleTex(uTex0, texCoords, vec2(2048.0));", i-1);
+                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
             }
         }
     }
