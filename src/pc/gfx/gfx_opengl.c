@@ -350,12 +350,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
     }
-#ifndef USE_TEXTURE_ATLAS
     if (cc_features.used_textures[1]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex1;");
     }
-#else
-#endif
 
 #ifndef USE_GLES2
     if (cc_features.opt_alpha && cc_features.opt_noise) {
@@ -390,7 +387,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
                 fs_len += sprintf(fs_buf + fs_len, "texCoords = vTexDimensions%d.xy;", i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords +=      vTexSampler%d.xz  * vTexDimensions%d.zw * clamp(vTexCoord%d, 0.0, 1.0);", i, i, i);
                 fs_len += sprintf(fs_buf + fs_len, "texCoords += (1.0-vTexSampler%d.xz) * vTexDimensions%d.zw * fract(vTexCoord%d);", i, i, i);
-                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex0, texCoords);", i-1);
+                fs_len += sprintf(fs_buf + fs_len, "vec4 texVal%d = texture2D(uTex%d, texCoords);", i-1, i-1);
             }
         }
     }
@@ -598,8 +595,10 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
     glActiveTexture(GL_TEXTURE0 + tile);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_filter ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_filter ? GL_LINEAR : GL_NEAREST);
+#ifndef USE_TEXTURE_ATLAS
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(cms));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gfx_cm_to_opengl(cmt));
+#endif
     ProfEmitEventEnd("gfx_opengl_set_sampler_parameters");
 }
 
@@ -692,13 +691,15 @@ static void gfx_opengl_bind_virtual_texture_page(void)
 {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vt_page);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, vt_page);
 }
 
 static void gfx_opengl_create_virtual_texture_page(uint16_t dimensions)
 {
     glGenTextures(1, &vt_page);
-    glBindTexture(GL_TEXTURE_2D, vt_page);
     glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, vt_page);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -803,6 +804,7 @@ static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x,
     memcpy(mirror_buf_head - v_stride, mirror_buf_head - v_stride*2, v_stride * sizeof(uint32_t));
 
     // Upload texture page
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, vt_page);
     glTexSubImage2D(GL_TEXTURE_2D, 0, x - 1, y - 1, v_stride, v_height, GL_RGBA, GL_UNSIGNED_BYTE, mirror_buf);
 
