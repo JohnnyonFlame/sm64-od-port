@@ -1799,9 +1799,6 @@ struct GfxRenderingAPI *gfx_get_current_rendering_api(void) {
 void gfx_start_frame(void) {
     gfx_wapi->handle_events();
     gfx_wapi->get_dimensions(&gfx_current_dimensions.width, &gfx_current_dimensions.height);
-#ifdef USE_TEXTURE_ATLAS
-    gfx_rapi->bind_virtual_texture_page();
-#endif
     if (gfx_current_dimensions.height == 0) {
         // Avoid division by zero
         gfx_current_dimensions.height = 1;
@@ -1820,8 +1817,12 @@ void gfx_run(Gfx *commands) {
     }
     dropped_frame = false;
     
+    rendering_state.shader_program = NULL;
     double t0 = gfx_wapi->get_time();
     gfx_rapi->start_frame();
+    #ifdef USE_TEXTURE_ATLAS
+    gfx_rapi->bind_virtual_texture_page();
+    #endif
     gfx_run_dl(commands);
     gfx_flush();
     double t1 = gfx_wapi->get_time();
