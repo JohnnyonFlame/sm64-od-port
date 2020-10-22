@@ -115,9 +115,11 @@ int sdl_snd_dispatch_fn(void *ptr)
             u32 num_audio_samples = audio_cnt < 2 ? 528 : 544;*/
             create_next_audio_buffer(audio_buffer + i * (num_audio_samples * 2), num_audio_samples);
         }
+        audio_game_loop_tick();
+        SDL_UnlockMutex(snd_mutex);
+
         //printf("Audio samples before submitting: %d\n", audio_api->buffered());
         audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
-        SDL_UnlockMutex(snd_mutex); 
 
     }
 
