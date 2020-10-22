@@ -1752,7 +1752,7 @@ void gfx_init(struct GfxWindowManagerAPI *wapi, struct GfxRenderingAPI *rapi, co
     gfx_rapi->init();
 
 #ifdef USE_TEXTURE_ATLAS
-    if (!atlas_create(&atlas, 2048, 4))
+    if (!atlas_create(&atlas, 2048, 1))
         abort();
 
     gfx_rapi->create_virtual_texture_page(2048);
