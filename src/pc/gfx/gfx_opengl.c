@@ -648,8 +648,13 @@ static void gfx_opengl_init(void) {
 #if FOR_WINDOWS
     glewInit();
 #endif
+#ifdef USE_GLES2
     glGenVertexArraysOES = SDL_GL_GetProcAddress("glGenVertexArraysOES");
     glBindVertexArrayOES = SDL_GL_GetProcAddress("glBindVertexArrayOES");
+#else
+    glGenVertexArraysOES = SDL_GL_GetProcAddress("glGenVertexArrays");
+    glBindVertexArrayOES = SDL_GL_GetProcAddress("glBindVertexArray");
+#endif
     if (!glGenVertexArraysOES || !glBindVertexArrayOES) {
         printf("Missing GL_OES_vertex_array_object, falling back.\n");
     } else {
