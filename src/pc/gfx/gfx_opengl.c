@@ -45,7 +45,7 @@ struct ShaderProgram {
     bool used_noise;
     GLint frame_count_location;
     GLint window_height_location;
-    GLuint vbo, vao;
+    GLuint vao;
     bool init;
 };
 
@@ -99,14 +99,11 @@ static void gfx_opengl_load_shader(struct ShaderProgram *new_prg) {
         if (!new_prg->init) {
             new_prg->init = 1;
             glGenVertexArraysOES(1, &new_prg->vao);
-            glGenBuffers(1, &new_prg->vbo);
             glBindVertexArrayOES(new_prg->vao);
-            glBindBuffer(GL_ARRAY_BUFFER, new_prg->vbo);
             gfx_opengl_vertex_array_set_attribs(new_prg);
         }
         else {
             glBindVertexArrayOES(new_prg->vao);
-            glBindBuffer(GL_ARRAY_BUFFER, new_prg->vbo);
         }
     } else {
         gfx_opengl_vertex_array_set_attribs(new_prg);
