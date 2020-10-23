@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "lib/src/libultra_internal.h"
+#include "fsutils.h"
 #include "macros.h"
 
 #ifdef TARGET_WEB
@@ -146,7 +147,7 @@ s32 osEepromLongRead(UNUSED OSMesgQueue *mq, u8 address, u8 *buffer, int nbytes)
         ret = 0;
     }
 #else
-    FILE *fp = fopen("sm64_save_file.bin", "rb");
+    FILE *fp = fopen_home("sm64_save_file.bin", "rb");
     if (fp == NULL) {
         return -1;
     }
@@ -176,7 +177,7 @@ s32 osEepromLongWrite(UNUSED OSMesgQueue *mq, u8 address, u8 *buffer, int nbytes
     }, content);
     s32 ret = 0;
 #else
-    FILE* fp = fopen("sm64_save_file.bin", "wb");
+    FILE* fp = fopen_home("sm64_save_file.bin", "wb");
     if (fp == NULL) {
         return -1;
     }

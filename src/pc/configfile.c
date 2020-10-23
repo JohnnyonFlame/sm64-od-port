@@ -7,6 +7,7 @@
 #include <ctype.h>
 
 #include "configfile.h"
+#include "fsutils.h"
 
 #define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
@@ -162,7 +163,7 @@ void configfile_load(const char *filename) {
 
     printf("Loading configuration from '%s'\n", filename);
 
-    file = fopen(filename, "r");
+    file = fopen_home(filename, "r");
     if (file == NULL) {
         // Create a new config file and save defaults
         printf("Config file '%s' not found. Creating it.\n", filename);
@@ -225,7 +226,7 @@ void configfile_save(const char *filename) {
 
     printf("Saving configuration to '%s'\n", filename);
 
-    file = fopen(filename, "w");
+    file = fopen_home(filename, "w");
     if (file == NULL) {
         // error
         return;
