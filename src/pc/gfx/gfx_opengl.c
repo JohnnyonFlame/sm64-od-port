@@ -31,6 +31,7 @@ static PFNGLGENVERTEXARRAYSOESPROC glGenVertexArraysOES;
 
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
+#include "gfx_opengl_dynares.h"
 #include "../cheapProfiler.h"
 
 struct ShaderProgram {
@@ -49,12 +50,70 @@ struct ShaderProgram {
     bool init;
 };
 
+struct FBOBlitter {
+    GLuint program;
+    GLuint vao;
+    GLuint fbo, fbo_tex, fbo_depth;
+    GLfloat h_scale, v_scale;
+    GLuint width, height;
+    GLint aCoord;
+    GLint uScale;
+    GLint uFBOTex;
+    int status;
+};
+
 static struct ShaderProgram shader_program_pool[64];
 static uint8_t shader_program_pool_size;
 static GLuint opengl_vbo;
 
 static uint32_t frame_count;
 static uint32_t current_height;
+
+static struct FBOBlitter dynares = {};
+
+static GLuint gfx_compile_shaders(const GLchar *sources[2], const const GLint lengths[2])
+{
+    GLint success;
+    GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
+    glCompileShader(vertex_shader);
+    glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        GLint max_length = 0;
+        glGetShaderiv(vertex_shader, GL_INFO_LOG_LENGTH, &max_length);
+        char error_log[1024];
+        fprintf(stderr, "Vertex shader compilation failed\n");
+        fprintf(stderr, "================================\n");
+        fprintf(stderr, sources[0]);
+        fprintf(stderr, "================================\n");
+        glGetShaderInfoLog(vertex_shader, max_length, &max_length, &error_log[0]);
+        fprintf(stderr, "%s\n", &error_log[0]);
+        abort();
+    }
+
+    GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragment_shader, 1, &sources[1], &lengths[1]);
+    glCompileShader(fragment_shader);
+    glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        GLint max_length = 0;
+        glGetShaderiv(fragment_shader, GL_INFO_LOG_LENGTH, &max_length);
+        char error_log[1024];
+        fprintf(stderr, "Fragment shader compilation failed\n");
+        fprintf(stderr, "================================\n");
+        fprintf(stderr, sources[1]);
+        fprintf(stderr, "================================\n");
+        glGetShaderInfoLog(fragment_shader, max_length, &max_length, &error_log[0]);
+        fprintf(stderr, "%s\n", &error_log[0]);
+        abort();
+    }
+
+    GLuint shader_program = glCreateProgram();
+    glAttachShader(shader_program, vertex_shader);
+    glAttachShader(shader_program, fragment_shader);
+    glLinkProgram(shader_program);
+    return shader_program;
+}
 
 #ifdef USE_TEXTURE_ATLAS
 GLuint vt_page;
@@ -432,54 +491,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     vs_buf[vs_len] = '\0';
     fs_buf[fs_len] = '\0';
 
-    /*puts("Vertex shader:");
-    puts(vs_buf);
-    puts("Fragment shader:");
-    puts(fs_buf);
-    puts("End");*/
-
     const GLchar *sources[2] = { vs_buf, fs_buf };
     const GLint lengths[2] = { vs_len, fs_len };
-    GLint success;
-
-    GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
-    glCompileShader(vertex_shader);
-    glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        GLint max_length = 0;
-        glGetShaderiv(vertex_shader, GL_INFO_LOG_LENGTH, &max_length);
-        char error_log[1024];
-        fprintf(stderr, "Vertex shader compilation failed\n");
-        fprintf(stderr, "================================\n");
-        fprintf(stderr, vs_buf);
-        fprintf(stderr, "================================\n");
-        glGetShaderInfoLog(vertex_shader, max_length, &max_length, &error_log[0]);
-        fprintf(stderr, "%s\n", &error_log[0]);
-        abort();
-    }
-
-    GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragment_shader, 1, &sources[1], &lengths[1]);
-    glCompileShader(fragment_shader);
-    glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        GLint max_length = 0;
-        glGetShaderiv(fragment_shader, GL_INFO_LOG_LENGTH, &max_length);
-        char error_log[1024];
-        fprintf(stderr, "Fragment shader compilation failed\n");
-        fprintf(stderr, "================================\n");
-        fprintf(stderr, fs_buf);
-        fprintf(stderr, "================================\n");
-        glGetShaderInfoLog(fragment_shader, max_length, &max_length, &error_log[0]);
-        fprintf(stderr, "%s\n", &error_log[0]);
-        abort();
-    }
-
-    GLuint shader_program = glCreateProgram();
-    glAttachShader(shader_program, vertex_shader);
-    glAttachShader(shader_program, fragment_shader);
-    glLinkProgram(shader_program);
+    GLuint shader_program = gfx_compile_shaders(sources, lengths);
 
     size_t cnt = 0;
 
@@ -622,11 +636,25 @@ static void gfx_opengl_set_zmode_decal(bool zmode_decal) {
 }
 
 static void gfx_opengl_set_viewport(int x, int y, int width, int height) {
+    if (dynares.status > 0) {
+        x *= dynares.h_scale;
+        y *= dynares.v_scale;
+        width *= dynares.h_scale;
+        height *= dynares.v_scale;
+    }
+
     glViewport(x, y, width, height);
     current_height = height;
 }
 
 static void gfx_opengl_set_scissor(int x, int y, int width, int height) {
+    if (dynares.status > 0) {
+        x *= dynares.h_scale;
+        y *= dynares.v_scale;
+        width *= dynares.h_scale;
+        height *= dynares.v_scale;
+    }
+
     glScissor(x, y, width, height);
 }
 
@@ -662,7 +690,6 @@ static void gfx_opengl_init(void) {
     }
 
     glGenBuffers(1, &opengl_vbo);
-    
     glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
     
     glDepthFunc(GL_LEQUAL);
@@ -672,9 +699,11 @@ static void gfx_opengl_init(void) {
 static void gfx_opengl_on_resize(void) {
 }
 
-static void gfx_opengl_start_frame(void) {
-    frame_count++;
+static void gfx_opengl_start_frame() {
+    dynares.h_scale = 0.5f;
+    dynares.v_scale = 0.5f;
 
+    gfx_opengl_bind_dynares(dynares.width, dynares.height);
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE); // Must be set to clear Z-buffer
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -683,6 +712,12 @@ static void gfx_opengl_start_frame(void) {
 }
 
 static void gfx_opengl_end_frame(void) {
+    ProfEmitEventStart("gfx_opengl_swap_dynares");
+    if (dynares.status > 0) {
+        gfx_opengl_swap_dynares();
+    }
+
+    ProfEmitEventEnd("gfx_opengl_swap_dynares");
 }
 
 static void gfx_opengl_finish_render(void) {
@@ -814,6 +849,147 @@ static void gfx_opengl_upload_virtual_texture(const uint8_t *rgba32_buf, int x,
 }
 #endif
 
+void gfx_opengl_bind_dynares(uint32_t width, uint32_t height)
+{
+    if (dynares.status <= 0)
+        return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, dynares.fbo);
+    glViewport(0, 0, width * dynares.h_scale, height * dynares.v_scale);
+}
+
+void gfx_opengl_swap_dynares()
+{
+    if (dynares.status <= 0)
+        return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glViewport(0, 0, dynares.width, dynares.height);
+
+    glUseProgram(dynares.program);
+    if (has_vao_support) {
+        glBindVertexArrayOES(dynares.vao);
+    } else {
+        glEnableVertexAttribArray(dynares.aCoord);
+        glVertexAttribPointer(dynares.aCoord, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), 0);
+    }
+
+    // Bind texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, dynares.fbo_tex);
+
+    // Set uniforms
+    GLfloat h_scale = floor(dynares.width * dynares.h_scale) / dynares.width;
+    GLfloat v_scale = floor(dynares.height * dynares.v_scale) / dynares.height;
+    glUniform2f(dynares.uScale, h_scale, v_scale);
+    glUniform1i(dynares.uFBOTex, 0);
+
+    // Dispatch drawcall
+    GLfloat vert[] = {
+        -1.0f, -1.0f,
+        -1.0f,  1.0f,
+         1.0f, -1.0f,
+         1.0f,  1.0f
+    };
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vert), vert, GL_STREAM_DRAW);    
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // Undo VA
+    if (has_vao_support) {
+        glBindVertexArrayOES(0);
+    } else {
+        glDisableVertexAttribArray(dynares.aCoord);
+    }
+}
+
+int gfx_opengl_init_dynares_program(void)
+{
+    // Create Program
+    GLchar *sources[2] = {gfx_dynares_vshader, gfx_dynares_fshader};
+    GLint lengths[2] = {strlen(gfx_dynares_vshader), strlen(gfx_dynares_fshader)};
+    dynares.program = gfx_compile_shaders(sources, lengths);
+
+    dynares.aCoord = glGetAttribLocation(dynares.program, "aCoord");
+    dynares.uScale = glGetUniformLocation(dynares.program, "uScale");
+    dynares.uFBOTex = glGetUniformLocation(dynares.program, "uFBOTex");
+
+    // Prepare the vertex array object
+    if (has_vao_support) {
+        glGenVertexArraysOES(1, &dynares.vao);
+        glBindVertexArrayOES(dynares.vao);
+        glEnableVertexAttribArray(dynares.aCoord);
+        glVertexAttribPointer(dynares.aCoord, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), 0);
+        glBindVertexArrayOES(0);
+    }
+}
+
+void gfx_opengl_init_dynares(uint32_t width, uint32_t height)
+{
+    // TODO:: REMOVE THIS
+    // DYNAMIC RES IS A HACK UNTIL FURTHER DISCUSSION AND TESTS
+    if (width <= 320)
+        return;
+
+    // Failed for some reason, don't retry
+    if (dynares.status < 0)
+        return;
+
+    // We are initialized and don't need updating it.
+    if (dynares.status > 0 && dynares.width == width && dynares.height == height)
+        return;
+
+    // We are initializing for the first time, populate necessary data.
+    if (dynares.status == 0) {
+        gfx_opengl_init_dynares_program();
+        glGenFramebuffers(1, &dynares.fbo);
+        glGenTextures(1, &dynares.fbo_tex);
+        glGenRenderbuffers(1, &dynares.fbo_depth);
+
+        dynares.h_scale = 1.0;
+        dynares.v_scale = 1.0;
+    }
+
+    // Bind the new framebuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, dynares.fbo);
+
+    // Allocate fbo texture and bind it to fbo
+    glBindTexture(GL_TEXTURE_2D, dynares.fbo_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dynares.fbo_tex, 0);    
+
+    // Allocate fbo depth buffer and bind it to fbo
+    glBindRenderbuffer(GL_RENDERBUFFER, dynares.fbo_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, dynares.fbo_depth);
+
+    // Store FB status
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+
+    // Unbind the new framebuffer, for cleanliness.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        printf("Framebuffer status incomplete, 0x%04x\n", status);
+        dynares.status = -1;
+        return;
+    }
+
+    dynares.width = width;
+    dynares.height = height;
+    dynares.status = 1;
+}
+
+static void gfx_opengl_signal_start(uint32_t width, uint32_t height)
+{
+    gfx_opengl_init_dynares(width, height);
+}
+
 struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_z_is_from_0_to_1,
     gfx_opengl_unload_shader,
@@ -842,6 +1018,7 @@ struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_create_virtual_texture_page,
     gfx_opengl_upload_virtual_texture,
 #endif
+    gfx_opengl_signal_start,
 };
 
 #endif

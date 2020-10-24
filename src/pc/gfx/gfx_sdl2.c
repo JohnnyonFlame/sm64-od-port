@@ -15,10 +15,12 @@
 #include "SDL_opengl.h"
 #else
 #include <SDL2/SDL.h>
+#include <time.h>
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengles2.h>
 #endif
 
+#include "../cheapProfiler.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_screen_config.h"
 
@@ -34,6 +36,12 @@ static void (*on_fullscreen_changed_callback)(bool is_now_fullscreen);
 static bool (*on_key_down_callback)(int scancode);
 static bool (*on_key_up_callback)(int scancode);
 static void (*on_all_keys_up_callback)(void);
+
+#define S_IN_NS (1e+9)
+#define MS_IN_NS (1e+6)
+static const double TARGET_FRAMETIME = (double)S_IN_NS / 31.5f; //1.5 frames of headroom
+static const double SLEEP_FRAMETIME = MS_IN_NS * 5.0;
+static struct timespec prev_frame = {};
 
 const SDL_Scancode windows_scancode_table[] =
 { 
@@ -153,6 +161,7 @@ int test_vsync(void) {
 }
 
 static void gfx_sdl_init(const char *game_name, bool start_in_fullscreen) {
+    clock_gettime(CLOCK_MONOTONIC, &prev_frame);
     SDL_Init(SDL_INIT_VIDEO);
 
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -174,7 +183,9 @@ static void gfx_sdl_init(const char *game_name, bool start_in_fullscreen) {
     SDL_GL_CreateContext(wnd);
 
     SDL_GL_SetSwapInterval(1);
-    test_vsync();
+    //test_vsync();
+    // Don't stage this
+    vsync_enabled = 0;
     if (!vsync_enabled)
         puts("Warning: VSync is not enabled or not working. Falling back to timer for synchronization");
 
@@ -272,7 +283,44 @@ static bool gfx_sdl_start_frame(void) {
     return true;
 }
 
+
+// Returns difference between two timespec structures in nanoseconds
+static double diff_timespec(struct timespec *t1, struct timespec *t2) 
+{
+    struct timespec td;
+    td.tv_nsec = t2->tv_nsec - t1->tv_nsec;
+    td.tv_sec  = t2->tv_sec - t1->tv_sec;
+
+    if (td.tv_sec > 0 && td.tv_nsec < 0) {         
+        td.tv_nsec += S_IN_NS;         
+        td.tv_sec--;
+    }     
+    else if (td.tv_sec < 0 && td.tv_nsec > 0) {         
+        td.tv_nsec -= S_IN_NS;         
+        td.tv_sec++;     
+    }
+
+    return td.tv_nsec + td.tv_sec * S_IN_NS;
+}
+
 static void sync_framerate_with_timer(void) {
+    static struct timespec cur_time;
+
+    do {
+        clock_gettime(CLOCK_MONOTONIC, &cur_time);
+        double frametime = diff_timespec(&prev_frame, &cur_time);
+        double wait = TARGET_FRAMETIME - frametime;
+        if (wait <= 0) {
+            break;
+        } else if (wait >= SLEEP_FRAMETIME) {
+            SDL_Delay(5);
+        }
+    } while(1);
+
+    prev_frame.tv_nsec = cur_time.tv_nsec;
+    prev_frame.tv_sec = cur_time.tv_sec;
+
+#if 0
     // Number of milliseconds a frame should take (30 fps)
     const Uint32 FRAME_TIME = 1000 / 30;
     static Uint32 last_time;
@@ -281,14 +329,19 @@ static void sync_framerate_with_timer(void) {
     if (elapsed < FRAME_TIME)
         SDL_Delay(FRAME_TIME - elapsed);
     last_time += FRAME_TIME;
+#endif
 }
 
 static void gfx_sdl_swap_buffers_begin(void) {
+    ProfEmitEventStart("idle_time");
     if (!vsync_enabled) {
         sync_framerate_with_timer();
     }
+    ProfEmitEventEnd("idle_time");
 
+    ProfEmitEventStart("SDL_GL_SwapWindow");
     SDL_GL_SwapWindow(wnd);
+    ProfEmitEventEnd("SDL_GL_SwapWindow");
 }
 
 static void gfx_sdl_swap_buffers_end(void) {

@@ -35,6 +35,7 @@ struct GfxRenderingAPI {
     void (*create_virtual_texture_page)(uint16_t dimensions);
     void (*upload_virtual_texture)(const uint8_t *rgba32_buf, int x, int y, int width, int height, int h_mirror, int v_mirror);
 #endif
+    void (*signal_start)(uint32_t width, uint32_t height);
 };
 
 #endif
