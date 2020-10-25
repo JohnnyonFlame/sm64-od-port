@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #if defined(TARGET_OD) || defined(TARGET_LINUX)
 #include <sys/stat.h>
@@ -13,7 +14,7 @@ FILE *fopen_home(const char *filename, const char *mode)
     const char *path = getenv("HOME");
     struct stat info;
 
-    snprintf(fnamepath, sizeof(fnamepath), "%s/.sm64-port/", path, filename);
+    snprintf(fnamepath, sizeof(fnamepath), "%s/.sm64-port/", path);
     if (stat(fnamepath, &info) != 0) {
         fprintf(stderr, "Creating '%s' for the first time...\n", fnamepath);
         mkdir(fnamepath, 0700);
