@@ -48,11 +48,11 @@ unsigned int configKeyStickLeft  = 0x1E;
 unsigned int configKeyStickRight = 0x20;
 
 #else
-unsigned int configKeyA          = 0x011D;
+unsigned int configKeyA          = 0x002A;
 unsigned int configKeyB          = 0x0138;
 unsigned int configKeyStart      = 0x011C;
 unsigned int configKeyR          = 0x000E;
-unsigned int configKeyZ          = 0x002A;
+unsigned int configKeyZ          = 0x0051;
 unsigned int configKeyCUp        = 0x0048;
 unsigned int configKeyCDown      = 0x0050;
 unsigned int configKeyCLeft      = 0x004b;

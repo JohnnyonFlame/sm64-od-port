@@ -135,6 +135,13 @@ static void controller_sdl_read(OSContPad *pad) {
 
     int16_t leftx = SDL_JoystickGetAxis(sdl_joy, 0);
     int16_t lefty = SDL_JoystickGetAxis(sdl_joy, 1);
+    int16_t rightx = SDL_JoystickGetAxis(sdl_joy, 2);
+    int16_t righty = SDL_JoystickGetAxis(sdl_joy, 3);
+    
+    if (rightx < -0x4000) pad->button |= L_CBUTTONS;
+    if (rightx > 0x4000) pad->button |= R_CBUTTONS;
+    if (righty < -0x4000) pad->button |= U_CBUTTONS;
+    if (righty > 0x4000) pad->button |= D_CBUTTONS;
 
     uint32_t magnitude_sq = (uint32_t)(leftx * leftx) + (uint32_t)(lefty * lefty);
     if (magnitude_sq > (uint32_t)(DEADZONE * DEADZONE)) {
