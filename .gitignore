@@ -28,6 +28,9 @@
 *.app
 *.hex
 
+# OpenDingux package files
+*.opk
+
 # Debug files
 *.dSYM/
 *.su

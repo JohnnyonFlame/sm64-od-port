@@ -24,6 +24,10 @@
 #include "gfx_window_manager_api.h"
 #include "gfx_screen_config.h"
 
+#ifdef TARGET_OD
+#include "../dingux.h"
+#endif
+
 #define GFX_API_NAME "SDL2 - OpenGL"
 
 static SDL_Window *wnd;
@@ -218,7 +222,11 @@ static void gfx_sdl_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bo
 }
 
 static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
+#ifdef TARGET_OD
+    while (!gExitGame) {
+#else
     while (1) {
+#endif
         run_one_game_iter();
     }
 }

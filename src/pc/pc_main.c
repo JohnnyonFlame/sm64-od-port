@@ -33,6 +33,11 @@
 #include "compat.h"
 #include "cheapProfiler.h"
 
+#ifdef TARGET_OD
+#include "dingux.h"
+unsigned int gExitGame = 0;
+#endif
+
 #define CONFIG_FILE "sm64config.txt"
 
 OSMesg D_80339BEC;
@@ -279,7 +284,11 @@ void main_func(void) {
     inited = 1;
 #else
     inited = 1;
+#ifdef TARGET_OD
+    while (!gExitGame) {
+#else
     while (1) {
+#endif
         wm_api->main_loop(produce_one_frame);
     }
 #endif

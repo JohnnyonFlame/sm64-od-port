@@ -15,6 +15,9 @@ extern unsigned int configKeyStickUp;
 extern unsigned int configKeyStickDown;
 extern unsigned int configKeyStickLeft;
 extern unsigned int configKeyStickRight;
+#ifdef TARGET_OD
+extern unsigned int configKeyExit;
+#endif
 
 void configfile_load(const char *filename);
 void configfile_save(const char *filename);

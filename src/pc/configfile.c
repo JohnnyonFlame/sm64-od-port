@@ -61,6 +61,7 @@ unsigned int configKeyStickUp    = 0x0200;
 unsigned int configKeyStickDown  = 0x0200;
 unsigned int configKeyStickLeft  = 0x0200;
 unsigned int configKeyStickRight = 0x0200;
+unsigned int configKeyExit       = 0x0101; /* SELECT button */
 #endif
 
 
@@ -79,6 +80,9 @@ static const struct ConfigOption options[] = {
     {.name = "key_stickdown",  .type = CONFIG_TYPE_UINT, .uintValue = &configKeyStickDown},
     {.name = "key_stickleft",  .type = CONFIG_TYPE_UINT, .uintValue = &configKeyStickLeft},
     {.name = "key_stickright", .type = CONFIG_TYPE_UINT, .uintValue = &configKeyStickRight},
+#ifdef TARGET_OD
+    {.name = "key_exit",       .type = CONFIG_TYPE_UINT, .uintValue = &configKeyExit},
+#endif
 };
 
 // Reads an entire line from a file (excluding the newline character) and returns an allocated string

@@ -9,6 +9,10 @@
 
 #include "../configfile.h"
 
+#ifdef TARGET_OD
+#include "../dingux.h"
+#endif
+
 static int keyboard_buttons_down;
 
 static int keyboard_mapping[13][2];
@@ -26,6 +30,11 @@ static int keyboard_map_scancode(int scancode) {
 bool keyboard_on_key_down(int scancode) {
     int mapped = keyboard_map_scancode(scancode);
     keyboard_buttons_down |= mapped;
+#ifdef TARGET_OD
+    if (scancode == (int)configKeyExit) {
+       gExitGame = 1;
+    }
+#endif
     return mapped != 0;
 }
 
